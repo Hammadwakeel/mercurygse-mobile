@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router"; // Use Expo Router for navigation
+import { useRouter } from "expo-router";
 import {
   Clock,
   Database,
@@ -25,8 +25,8 @@ import {
 // Components
 import ConversationRow from "./ConversationRow";
 import SearchModal from "./SearchModal";
-import SidebarSection from "./SidebarSection"; // You need to convert this too, or use a simple View
-import ThemeToggle from "./ThemeToggle"; // You need to convert this too
+import SidebarSection from "./SidebarSection";
+import ThemeToggle from "./ThemeToggle";
 
 // API
 import { api, ChatSession, User } from "../lib/api";
@@ -48,7 +48,6 @@ interface SidebarProps {
   createNewChat?: () => void;
 }
 
-// Simple in-memory cache variable for the session
 let cachedConversations: ChatSession[] | null = null;
 let cachedUser: User | null = null;
 
@@ -107,7 +106,6 @@ export default function Sidebar({
         }
         hasFetched.current = true;
 
-        // Load User from Storage
         const localUser = await AsyncStorage.getItem("user");
         if (localUser && !cachedUser) {
           try {
@@ -163,7 +161,7 @@ export default function Sidebar({
   const handleCreateChat = () => {
     if (createNewChat) createNewChat();
     else onSelect(null);
-    onClose(); // Always close sidebar on mobile when creating new chat
+    onClose(); 
   };
 
   const handleDeleteChat = async (id: string) => {
@@ -205,7 +203,6 @@ export default function Sidebar({
     return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
   };
 
-  // Styles
   const styles = getStyles(isDark);
   const iconColor = isDark ? "#a1a1aa" : "#71717a";
 
@@ -215,7 +212,8 @@ export default function Sidebar({
     if (userData) {
       return (
         <TouchableOpacity
-          onPress={() => router.push("/profile")}
+          // ✅ FIX: Cast to 'any' allows navigation even if file types aren't fully generated
+          onPress={() => router.push("/profile" as any)}
           style={styles.userRow}
         >
           <View style={styles.avatarContainer}>
@@ -244,7 +242,8 @@ export default function Sidebar({
 
     return (
       <TouchableOpacity
-        onPress={() => router.push("/login")}
+        // ✅ FIX: Cast to 'any'
+        onPress={() => router.push("/login" as any)}
         style={styles.loginBtn}
       >
         <LogIn size={16} color="#fff" style={{ marginRight: 8 }} />
@@ -253,13 +252,7 @@ export default function Sidebar({
     );
   };
 
-  // --- Render ---
-  
-  // NOTE: On mobile, "sidebarCollapsed" (mini sidebar) is rarely used. 
-  // We treat the sidebar as a Drawer.
-
   if (sidebarCollapsed) {
-    // Mini Sidebar (Tablet use case mainly)
     return (
         <View style={styles.collapsedContainer}>
              <TouchableOpacity onPress={() => setSidebarCollapsed(false)} style={styles.iconBtn}>
@@ -273,7 +266,7 @@ export default function Sidebar({
                     <SearchIcon size={20} color={iconColor} />
                 </TouchableOpacity>
                 {userData?.role === 'admin' && (
-                    <TouchableOpacity onPress={() => router.push('/admin')} style={styles.iconBtn}>
+                    <TouchableOpacity onPress={() => router.push('/admin' as any)} style={styles.iconBtn}>
                         <Database size={20} color={iconColor} />
                     </TouchableOpacity>
                 )}
@@ -285,7 +278,6 @@ export default function Sidebar({
   return (
     <>
       <View style={styles.container}>
-        {/* Header Section */}
         <View style={styles.header}>
           <TouchableOpacity
             onPress={() => setShowSearchModal(true)}
@@ -295,7 +287,6 @@ export default function Sidebar({
           </TouchableOpacity>
 
           <View style={styles.headerRight}>
-             {/* Collapsed button usually hidden on phones, shown on tablets */}
             <TouchableOpacity
               onPress={() => setSidebarCollapsed(true)}
               style={[styles.iconBtn, { display: Platform.OS === 'web' ? 'flex' : 'none' }]} 
@@ -321,7 +312,6 @@ export default function Sidebar({
           </TouchableOpacity>
         </View>
 
-        {/* Chat List */}
         <ScrollView style={styles.scrollArea}>
           <SidebarSection
             icon={<Clock size={16} color={iconColor} />}
@@ -356,12 +346,12 @@ export default function Sidebar({
           </SidebarSection>
         </ScrollView>
 
-        {/* Footer */}
         <View style={styles.footer}>
           <View style={styles.footerControls}>
             {userData?.role === "admin" && (
               <TouchableOpacity
-                onPress={() => router.push("/admin")}
+                // ✅ FIX: Cast to 'any'
+                onPress={() => router.push("/admin" as any)}
                 style={styles.iconBtn}
               >
                 <Database size={20} color={iconColor} />
@@ -387,8 +377,6 @@ export default function Sidebar({
     </>
   );
 }
-
-// --- STYLES ---
 
 const getStyles = (isDark: boolean) => StyleSheet.create({
   container: {
