@@ -1,25 +1,37 @@
 // app/index.tsx
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
-import React, { useEffect } from "react";
+import { useRouter } from "expo-router";
+import React, { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet } from "react-native";
-// ✅ FIX: Import from safe-area-context, not react-native
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Index() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    (async () => {
+    const checkAuth = async () => {
       try {
-        // Clear old data to force login (as requested previously)
-        await AsyncStorage.removeItem("accessToken");
-        await AsyncStorage.removeItem("authToken");
-      } catch (error) {
-        console.warn("Failed to clear auth storage", error);
+        // 1. Check if token exists
+        const token = await AsyncStorage.getItem("accessToken");
+
+        if (token) {
+          // ✅ User is logged in -> Go to Chat
+          // We use replace so they can't "back" into the loading screen
+          router.replace("/chat" as any);
+        } else {
+          // ❌ No token -> Go to Login
+          router.replace("/login" as any);
+        }
+      } catch (e) {
+        // Safety fallback
+        router.replace("/login" as any);
+      } finally {
+        setLoading(false);
       }
-      
-      // Redirect to login page
-      router.replace("/login");
-    })();
+    };
+
+    checkAuth();
   }, []);
 
   return (

@@ -1,4 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -18,16 +17,14 @@ import {
   useColorScheme,
   View
 } from "react-native";
-import { api } from "../lib/api"; // Ensure this path is correct relative to app/login.tsx
-
-// --- Theme Toggle Component ---
-import ThemeToggle from "../components/ThemeToggle"; // Reusing the toggle you created
+// Remove AsyncStorage import since we don't need it here anymore
+import ThemeToggle from "../components/ThemeToggle";
+import { api } from "../lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
   const systemScheme = useColorScheme();
   
-  // Simple local state for theme toggle demo (in real app, use Context)
   const [theme, setTheme] = useState<"light" | "dark">(systemScheme || "light");
   const isDark = theme === "dark";
 
@@ -42,16 +39,13 @@ export default function LoginPage() {
     Keyboard.dismiss();
 
     try {
-      const response = await api.auth.login(email, password);
-      
-      // Save tokens
-      await AsyncStorage.setItem("accessToken", response.access_token);
-      await AsyncStorage.setItem("refreshToken", response.refresh_token);
-      await AsyncStorage.setItem("tokenType", response.token_type);
-      await AsyncStorage.setItem("user", JSON.stringify(response.user));
+      // ✅ FIX: Just call api.auth.login(). 
+      // It now handles saving tokens to AsyncStorage internally and safely.
+      await api.auth.login(email, password);
       
       // Navigate Home
-      router.replace("/");
+      // Cast to 'any' to bypass strict typing if routes aren't generated yet
+      router.replace("/" as any);
       
     } catch (err: any) {
       console.error("Login Error:", err);
@@ -71,10 +65,8 @@ export default function LoginPage() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
       
-      {/* Background Layer (Simulating the gradient with solid color for simplicity) */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none" />
 
-      {/* Theme Toggle Positioned Top Right */}
       <View style={styles.topRight}>
         <ThemeToggle theme={theme} setTheme={setTheme} />
       </View>
@@ -86,32 +78,27 @@ export default function LoginPage() {
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.contentContainer}>
             
-            {/* CARD */}
             <View style={styles.card}>
               
-              {/* Header */}
               <View style={styles.cardHeader}>
                 <Text style={styles.title}>Welcome Back</Text>
                 <Text style={styles.subtitle}>Sign in to your account to continue</Text>
               </View>
 
-              {/* Error Message */}
               {error ? (
                 <View style={styles.errorBox}>
                   <Text style={styles.errorText}>{error}</Text>
                 </View>
               ) : null}
 
-              {/* Form */}
               <View style={styles.form}>
                 
-                {/* Email */}
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Email Address</Text>
                   <TextInput
                     style={styles.input}
                     placeholder="you@example.com"
-                    placeholderTextColor={isDark ? "#71717a" : "#a1a1aa"} // Zinc 500 / 400
+                    placeholderTextColor={isDark ? "#71717a" : "#a1a1aa"}
                     value={email}
                     onChangeText={setEmail}
                     keyboardType="email-address"
@@ -120,7 +107,6 @@ export default function LoginPage() {
                   />
                 </View>
 
-                {/* Password */}
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Password</Text>
                   <TextInput
@@ -133,7 +119,6 @@ export default function LoginPage() {
                   />
                 </View>
 
-                {/* Submit Button */}
                 <TouchableOpacity
                   onPress={handleLogin}
                   disabled={isLoading}
@@ -149,32 +134,27 @@ export default function LoginPage() {
 
               </View>
 
-              {/* Divider */}
               <View style={styles.dividerContainer}>
                 <View style={styles.dividerLine} />
                 <Text style={styles.dividerText}>Or continue with</Text>
                 <View style={styles.dividerLine} />
               </View>
 
-              {/* Social Login */}
               <TouchableOpacity
                 onPress={() => handleSocialLogin("Google")}
                 style={styles.socialBtn}
                 activeOpacity={0.8}
               >
-                {/* Google Icon SVG Placeholder - Using Text 'G' or Image */}
                 <View style={styles.googleIconContainer}>
                    <Image 
                      source={{ uri: "https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" }}
-                     // Note: SVGs need library support, using simple View logic or remote PNG usually easier for quick prototype
-                     // Here we just use a simple colored 'G' text for simplicity if image fails load
+                     style={{ width: 20, height: 20 }}
+                     resizeMode="contain"
                    />
-                   <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#4285F4' }}>G</Text>
                 </View>
                 <Text style={styles.socialBtnText}>Google</Text>
               </TouchableOpacity>
 
-              {/* Footer */}
               <View style={styles.footer}>
                 <Text style={styles.footerText}>Don't have an account? </Text>
                 <TouchableOpacity onPress={() => router.push("/signup" as any)}>
@@ -190,13 +170,11 @@ export default function LoginPage() {
   );
 }
 
-// --- STYLES ---
-
 function getStyles(isDark: boolean) {
   return StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: isDark ? "#09090b" : "#f8fafc", // Zinc 950 / 50
+      backgroundColor: isDark ? "#09090b" : "#f8fafc",
     },
     topRight: {
       position: 'absolute',
@@ -210,10 +188,10 @@ function getStyles(isDark: boolean) {
       padding: 20,
     },
     card: {
-      backgroundColor: isDark ? "#18181b" : "#ffffff", // Zinc 900 / White
+      backgroundColor: isDark ? "#18181b" : "#ffffff",
       borderRadius: 24,
       borderWidth: 1,
-      borderColor: isDark ? "#27272a" : "#e4e4e7", // Zinc 800 / 200
+      borderColor: isDark ? "#27272a" : "#e4e4e7",
       shadowColor: "#000",
       shadowOffset: { width: 0, height: 10 },
       shadowOpacity: 0.1,
@@ -226,18 +204,18 @@ function getStyles(isDark: boolean) {
       paddingTop: 32,
       paddingBottom: 24,
       borderBottomWidth: 1,
-      borderBottomColor: isDark ? "#27272a" : "#f4f4f5", // Zinc 800 / 100
+      borderBottomColor: isDark ? "#27272a" : "#f4f4f5",
       alignItems: 'center',
     },
     title: {
       fontSize: 28,
       fontWeight: "bold",
-      color: isDark ? "#f4f4f5" : "#18181b", // Zinc 100 / 900
+      color: isDark ? "#f4f4f5" : "#18181b",
       marginBottom: 8,
     },
     subtitle: {
       fontSize: 14,
-      color: isDark ? "#a1a1aa" : "#52525b", // Zinc 400 / 600
+      color: isDark ? "#a1a1aa" : "#52525b",
     },
     form: {
       padding: 24,
@@ -249,21 +227,21 @@ function getStyles(isDark: boolean) {
     label: {
       fontSize: 14,
       fontWeight: "600",
-      color: isDark ? "#d4d4d8" : "#3f3f46", // Zinc 300 / 700
+      color: isDark ? "#d4d4d8" : "#3f3f46",
     },
     input: {
-      backgroundColor: isDark ? "#000000" : "#ffffff", // Black / White
+      backgroundColor: isDark ? "#000000" : "#ffffff",
       borderWidth: 1,
-      borderColor: isDark ? "#3f3f46" : "#e4e4e7", // Zinc 700 / 200
+      borderColor: isDark ? "#3f3f46" : "#e4e4e7",
       borderRadius: 8,
       paddingHorizontal: 16,
-      paddingVertical: 14, // Taller inputs
+      paddingVertical: 14,
       fontSize: 16,
       color: isDark ? "#f4f4f5" : "#18181b",
     },
     primaryBtn: {
       marginTop: 8,
-      backgroundColor: "#9333ea", // Purple 600
+      backgroundColor: "#9333ea",
       paddingVertical: 16,
       borderRadius: 8,
       alignItems: 'center',
@@ -285,13 +263,13 @@ function getStyles(isDark: boolean) {
       marginHorizontal: 24,
       marginTop: 24,
       padding: 12,
-      backgroundColor: isDark ? "rgba(127, 29, 29, 0.2)" : "#fef2f2", // Red 900/20 / Red 50
+      backgroundColor: isDark ? "rgba(127, 29, 29, 0.2)" : "#fef2f2",
       borderWidth: 1,
-      borderColor: isDark ? "#7f1d1d" : "#fecaca", // Red 800 / 200
+      borderColor: isDark ? "#7f1d1d" : "#fecaca",
       borderRadius: 8,
     },
     errorText: {
-      color: isDark ? "#fca5a5" : "#b91c1c", // Red 300 / 700
+      color: isDark ? "#fca5a5" : "#b91c1c",
       fontSize: 14,
       textAlign: 'center',
       fontWeight: "500",
@@ -310,7 +288,7 @@ function getStyles(isDark: boolean) {
     },
     dividerText: {
       fontSize: 13,
-      color: isDark ? "#71717a" : "#a1a1aa", // Zinc 500 / 400
+      color: isDark ? "#71717a" : "#a1a1aa",
       fontWeight: "500",
     },
     socialBtn: {
@@ -347,7 +325,7 @@ function getStyles(isDark: boolean) {
       fontSize: 14,
     },
     linkText: {
-      color: isDark ? "#c084fc" : "#9333ea", // Purple 400 / 600
+      color: isDark ? "#c084fc" : "#9333ea",
       fontWeight: "bold",
       fontSize: 14,
     },

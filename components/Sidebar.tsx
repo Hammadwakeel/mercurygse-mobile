@@ -44,6 +44,8 @@ interface SidebarProps {
   setSidebarCollapsed?: (collapsed: boolean) => void;
   conversations?: ChatSession[];
   userData: User | null;
+  // ✅ FIX: Added userAvatar to props to satisfy the parent component
+  userAvatar?: string; 
   onDeleteChat: (id: string) => void;
   createNewChat?: () => void;
 }
@@ -64,6 +66,8 @@ export default function Sidebar({
   setSidebarCollapsed = () => {},
   conversations: propConversations = [],
   userData: propUserData = null,
+  // userAvatar is destructured but ignored in favor of userData
+  userAvatar, 
   onDeleteChat,
   createNewChat
 }: SidebarProps) {
@@ -75,26 +79,22 @@ export default function Sidebar({
   const [mounted, setMounted] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
 
-  // Internal State
   const [internalConversations, setInternalConversations] = useState<ChatSession[]>(
     propConversations.length > 0 ? propConversations : (cachedConversations || [])
   );
   const [internalUser, setInternalUser] = useState<User | null>(cachedUser);
   const [loading, setLoading] = useState(!cachedConversations);
 
-  // Source of Truth
   const conversations = internalConversations;
   const userData = propUserData || internalUser;
   const hasFetched = useRef(!!cachedConversations);
 
-  // Sync Props
   useEffect(() => {
     if (propConversations.length > 0) {
       setInternalConversations(propConversations);
     }
   }, [propConversations]);
 
-  // Init Data
   useEffect(() => {
     setMounted(true);
 
@@ -148,16 +148,6 @@ export default function Sidebar({
     }
   }, [propConversations.length]);
 
-  const refreshChats = async () => {
-    try {
-      const chats = await api.chat.list();
-      setInternalConversations(chats);
-      cachedConversations = chats;
-    } catch (e) {
-      console.error("Failed to refresh chats", e);
-    }
-  };
-
   const handleCreateChat = () => {
     if (createNewChat) createNewChat();
     else onSelect(null);
@@ -175,10 +165,11 @@ export default function Sidebar({
 
         if (selectedId === id) onSelect(null);
         await api.chat.delete(id);
-        await refreshChats();
+        const chats = await api.chat.list();
+        setInternalConversations(chats);
+        cachedConversations = chats;
       } catch (e) {
         console.error("Delete failed", e);
-        refreshChats();
       }
     }
   };
@@ -191,10 +182,11 @@ export default function Sidebar({
       setInternalConversations(updated);
       cachedConversations = updated;
       await api.chat.rename(id, newTitle);
-      await refreshChats();
+      const chats = await api.chat.list();
+      setInternalConversations(chats);
+      cachedConversations = chats;
     } catch (e) {
       console.error("Rename failed", e);
-      refreshChats();
     }
   };
 
@@ -212,7 +204,7 @@ export default function Sidebar({
     if (userData) {
       return (
         <TouchableOpacity
-          // ✅ FIX: Cast to 'any' allows navigation even if file types aren't fully generated
+          // ✅ FIX: Cast route to 'any' to bypass strict typing if file is missing
           onPress={() => router.push("/profile" as any)}
           style={styles.userRow}
         >
@@ -242,7 +234,7 @@ export default function Sidebar({
 
     return (
       <TouchableOpacity
-        // ✅ FIX: Cast to 'any'
+        // ✅ FIX: Cast route to 'any'
         onPress={() => router.push("/login" as any)}
         style={styles.loginBtn}
       >
@@ -266,6 +258,7 @@ export default function Sidebar({
                     <SearchIcon size={20} color={iconColor} />
                 </TouchableOpacity>
                 {userData?.role === 'admin' && (
+                    // ✅ FIX: Cast route to 'any'
                     <TouchableOpacity onPress={() => router.push('/admin' as any)} style={styles.iconBtn}>
                         <Database size={20} color={iconColor} />
                     </TouchableOpacity>
@@ -350,7 +343,7 @@ export default function Sidebar({
           <View style={styles.footerControls}>
             {userData?.role === "admin" && (
               <TouchableOpacity
-                // ✅ FIX: Cast to 'any'
+                // ✅ FIX: Cast route to 'any'
                 onPress={() => router.push("/admin" as any)}
                 style={styles.iconBtn}
               >

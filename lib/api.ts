@@ -1,13 +1,18 @@
 // src/lib/api.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
 // --- Configuration ---
-// Note: In Expo, use Constants.expoConfig.extra.apiUrl if strictly needed, 
-// or hardcode for dev. For Android Emulator, use 10.0.2.2 instead of localhost.
-const LOCAL_IP = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
-const API_BASE_URL = "http://" + LOCAL_IP + ":8000/api/v1"; 
+
+// ✅ FIX: Use the specific IP found in your Metro logs (10.49.43.164).
+// 'localhost' only works for iOS Simulators.
+// '10.0.2.2' only works for Android Emulators.
+// For Physical Devices, you MUST use your computer's LAN IP.
+const LAN_IP = "10.49.43.164"; 
+
+const API_BASE_URL = `http://${LAN_IP}:8000/api/v1`; 
 const INGESTION_BASE_URL = "https://hammad712-ingestion.hf.space";
+
+export { API_BASE_URL, INGESTION_BASE_URL };
 
 // --- Types & Interfaces ---
 
@@ -23,7 +28,7 @@ export interface AuthResponse {
   access_token: string;
   token_type: string;
   user: User;
-  refresh_token: string;
+  refresh_token?: string; // Optional because some backends might not send it
 }
 
 export interface ChatSession {
@@ -99,11 +104,18 @@ export async function login(email: string, password: string): Promise<AuthRespon
     body: JSON.stringify({ email, password }),
   });
   
-  // Save tokens immediately upon success
-  await AsyncStorage.setItem("accessToken", data.access_token);
-  await AsyncStorage.setItem("refreshToken", data.refresh_token);
-  // Store user object as string
-  await AsyncStorage.setItem("user", JSON.stringify(data.user));
+  // ✅ FIX: Safely save tokens only if they exist
+  if (data.access_token) {
+    await AsyncStorage.setItem("accessToken", data.access_token);
+  }
+  
+  if (data.refresh_token) {
+    await AsyncStorage.setItem("refreshToken", data.refresh_token);
+  }
+  
+  if (data.user) {
+    await AsyncStorage.setItem("user", JSON.stringify(data.user));
+  }
   
   return data;
 }
@@ -146,12 +158,6 @@ export const ingestBulkDocument = async (
   } as any);
 
   try {
-    // Note: React Native's fetch implementation does not support ReadableStream properly
-    // for streaming responses (SSE) out of the box on Android/iOS without extra libraries 
-    // like 'react-native-sse' or 'react-native-fetch-api'.
-    // However, for this implementation, we will try standard fetch.
-    // If stream fails, consider using `react-native-event-source` for SSE endpoints.
-    
     const response = await fetch(`${INGESTION_BASE_URL}/process/process-document`, {
       method: "POST",
       body: formData,
@@ -168,10 +174,6 @@ export const ingestBulkDocument = async (
       throw new Error(errMsg);
     }
 
-    // WARNING: React Native fetch() creates a basic text response, not a stream
-    // unless using a polyfill. The following code assumes a text stream is mocked or 
-    // valid in your specific RN environment (e.g. Expo SDK 50+ has better fetch support).
-    
     // Fallback: Read full text if streaming isn't supported
     const text = await response.text();
     const lines = text.split("\n\n");
@@ -221,8 +223,6 @@ export const api = {
       await AsyncStorage.removeItem("accessToken");
       await AsyncStorage.removeItem("refreshToken");
       await AsyncStorage.removeItem("user");
-      // In React Native, you handle navigation outside via a Router hook or context
-      // e.g. router.replace('/login')
     },
     // Add helper to retrieve user from storage
     getMe: async () => {
@@ -300,8 +300,6 @@ export const api = {
   },
 
   // --- Message Handling ---
-  // Note: Streaming in React Native fetch requires careful handling or external libs.
-  // This logic works if the RN environment polyfills TextDecoder/fetch-stream.
   streamMessage: async (
     message: string, 
     threadId: string | null,
@@ -324,59 +322,29 @@ export const api = {
         throw new Error(err.detail || "Stream connection failed");
       }
       
-      // Fallback for RN: if `response.body` (ReadableStream) isn't available
-      // we might need to await response.text() which defeats the purpose of streaming.
-      // Or use a library like `react-native-sse` or `react-native-fetch-api` polyfill.
-      
-      // Assuming a valid environment (like newer Expo or polyfilled fetch):
-      if ((response as any).body) {
-        // @ts-ignore
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n\n");
-          
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
+      // Fallback: Just read text (no stream effect but functional for RN fetch)
+      const text = await response.text();
+      const lines = text.split("\n\n");
+      lines.forEach(line => {
+           if (line.startsWith("data: ")) {
               const dataStr = line.replace("data: ", "").trim();
               if (dataStr === "[DONE]") {
-                onDone();
-                return;
+                  onDone();
+                  return;
               }
               try {
-                const parsed = JSON.parse(dataStr);
-                if (parsed.error) {
-                  onError(parsed.error);
-                } else if (parsed.content) {
-                  onChunk(parsed.content, parsed.thread_id);
-                }
-              } catch (e) { }
-            }
-          }
-        }
-      } else {
-        // Fallback: Just read text (no stream effect but functional)
-        const text = await response.text();
-        const lines = text.split("\n\n");
-        lines.forEach(line => {
-             if (line.startsWith("data: ")) {
-                const dataStr = line.replace("data: ", "").trim();
-                if (dataStr === "[DONE]") {
-                    onDone();
-                    return;
-                }
-                try {
-                    const parsed = JSON.parse(dataStr);
-                    if (parsed.content) onChunk(parsed.content, parsed.thread_id);
-                } catch(e) {}
-             }
-        });
-      }
+                  const parsed = JSON.parse(dataStr);
+                  if (parsed.error) {
+                    onError(parsed.error);
+                  } else if (parsed.content) {
+                    onChunk(parsed.content, parsed.thread_id);
+                  }
+              } catch(e) {}
+           }
+      });
+      
+      // Since we aren't truly streaming in this fetch implementation, call Done at the end
+      onDone();
 
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -388,7 +356,6 @@ export const api = {
     }
   },
 
-  // Simplified non-streaming edit for RN to reduce complexity
   editMessage: async (
     messageId: string, 
     newContent: string,
@@ -422,16 +389,14 @@ export const api = {
             } catch {}
           }
       }
+      onDone();
     } catch (err: any) {
       if (err.name !== 'AbortError') console.error("Edit stream failed", err);
     }
   },
   
-  // Helper to get image function
   getAvatarImage: async (avatarPath: string) => {
-      // If it's a full URL, return it
       if (avatarPath.startsWith('http')) return avatarPath;
-      // If it's a relative path from your backend
       return `${API_BASE_URL}/${avatarPath}`;
   }
 };
