@@ -1,19 +1,19 @@
 // components/Composer.tsx
 import { Entypo, MaterialIcons } from "@expo/vector-icons";
 import React, {
-    forwardRef,
-    useImperativeHandle,
-    useRef,
-    useState,
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
 } from "react";
 import {
-    ActivityIndicator,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from "react-native";
 import ComposerActionsPopover from "./ComposerActionsPopover";
 

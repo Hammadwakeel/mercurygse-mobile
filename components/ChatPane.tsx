@@ -1,296 +1,486 @@
-// components/ChatPane.tsx
-import { Check, Pencil, Square, X } from "lucide-react-native";
-import React, {
-    forwardRef,
-    useEffect,
-    useImperativeHandle,
-    useRef,
-    useState,
-} from "react";
+import * as Clipboard from 'expo-clipboard';
+import { Bot, Check, Copy, Pencil, Sparkles } from 'lucide-react-native';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
-    Animated, // <--- ADDED THIS IMPORT
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useColorScheme,
+  View
 } from "react-native";
-import Composer from "./Composer";
-import Message from "./Message";
+import Markdown from 'react-native-markdown-display';
 
-type MessageItem = {
-  id: string;
-  role: "user" | "assistant" | string;
-  content: string;
-};
+// API Types
+import { Message as MessageType } from "../lib/api";
 
-type Conversation = {
-  id: string;
-  title?: string;
-  updatedAt?: string;
-  messages?: MessageItem[];
-  messageCount?: number;
-};
+import Composer, { ComposerHandle } from "./Composer";
 
-type Props = {
-  conversation?: Conversation | null;
-  onSend?: (text: string) => Promise<void> | void;
-  onEditMessage?: (id: string, newContent: string) => void;
-  onResendMessage?: (id: string) => void;
-  isThinking?: boolean;
-  onPauseThinking?: () => void;
-  userName?: string;
-  theme?: "light" | "dark"; 
-};
+export interface ChatPaneHandle {
+  insertTemplate: (content: string) => void;
+  focus: () => void;
+}
 
-const ChatPane = forwardRef(function ChatPane(
-  {
-    conversation,
-    onSend,
-    onEditMessage,
-    onResendMessage,
-    isThinking,
-    onPauseThinking,
-    userName,
-    theme = "light",
-  }: Props,
+interface ChatPaneProps {
+  conversation: {
+    id: string
+    title: string
+    messages: MessageType[]
+    updatedAt: string
+    preview: string
+    pinned: boolean
+    folder: string
+    messageCount: number
+  } | null
+  onSend: (content: string) => void
+  onEditMessage: (messageId: string, newContent: string) => void
+  onResendMessage: (messageId: string) => void
+  isThinking: boolean
+  onPauseThinking: () => void
+  userName?: string
+  userAvatar?: string
+  theme?: "light" | "dark" // Keeping strict type here
+}
+
+const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
+  { conversation, onSend, onEditMessage, onResendMessage, isThinking, onPauseThinking, userName, userAvatar, theme },
   ref,
 ) {
-  const isDarkMode = theme === 'dark';
-
-  const colors = {
-    bg: isDarkMode ? "#09090b" : "#ffffff",      
-    text: isDarkMode ? "#e4e4e7" : "#0f172a",    
-    textMuted: isDarkMode ? "#a1a1aa" : "#6b7280", 
-    border: isDarkMode ? "#27272a" : "#e5e7eb",  
-    cardBg: isDarkMode ? "#18181b" : "#fafafa",  
-    icon: isDarkMode ? "#e4e4e7" : "#111827",    
-    inputBg: isDarkMode ? "#18181b" : "#ffffff",
-    placeholder: isDarkMode ? "#71717a" : "#9ca3af",
-  };
+  const systemScheme = useColorScheme();
+  
+  // ✅ FIX: Safer logic for determining dark mode
+  // If 'theme' prop is provided, use it. Otherwise fallback to systemScheme.
+  // We default to 'light' if both are undefined/null.
+  const activeScheme = theme ?? systemScheme ?? "light";
+  const isDark = activeScheme === "dark";
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const composerRef = useRef<any>(null);
-  const scrollRef = useRef<ScrollView | null>(null);
-  const inputRef = useRef<TextInput | null>(null);
+  
+  const scrollViewRef = useRef<ScrollView>(null);
+  const internalComposerRef = useRef<ComposerHandle>(null);
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      insertTemplate: (templateContent: string) => {
-        composerRef.current?.insertTemplate?.(templateContent);
-      },
-    }),
-    [],
-  );
+  const scrollToBottom = () => {
+    if (scrollViewRef.current) {
+        scrollViewRef.current.scrollToEnd({ animated: true });
+    }
+  };
 
   useEffect(() => {
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 120);
-  }, [conversation?.messages?.length, isThinking]);
+    const timer = setTimeout(() => {
+        scrollToBottom();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [conversation?.messages, isThinking]);
 
-  if (!conversation) return null;
+  useImperativeHandle(ref, () => ({
+      insertTemplate: (templateContent: string) => {
+        internalComposerRef.current?.insertTemplate(templateContent);
+      },
+      focus: () => {
+        internalComposerRef.current?.focus();
+      }
+  }), []);
 
-  const messages: MessageItem[] = Array.isArray(conversation.messages)
-    ? conversation.messages
-    : [];
+  const handleCopy = async (text: string) => {
+    await Clipboard.setStringAsync(text);
+  };
 
-  function startEdit(m: MessageItem) {
-    setEditingId(m.id);
-    setDraft(m.content);
-    setTimeout(() => inputRef.current?.focus?.(), 100);
+  const getInitials = (name?: string) => {
+    if (!name) return "U";
+    return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
+  };
+
+  const styles = getStyles(isDark);
+  const markdownStyles = getMarkdownStyles(isDark);
+
+  if (!conversation) {
+    return (
+      <View style={styles.emptyContainer}>
+        <View style={styles.emptyIconCircle}>
+          <Sparkles size={32} color={isDark ? "#a1a1aa" : "#a1a1aa"} />
+        </View>
+        <Text style={styles.emptyTitle}>AI Assistant</Text>
+        <Text style={styles.emptyDesc}>
+          Select a conversation from the sidebar or start a new chat to begin.
+        </Text>
+      </View>
+    );
   }
-  function cancelEdit() {
-    setEditingId(null);
-    setDraft("");
-    Keyboard.dismiss();
-  }
-  function saveEdit() {
-    if (!editingId) return;
-    onEditMessage?.(editingId, draft);
-    cancelEdit();
-  }
-  function saveAndResend() {
-    if (!editingId) return;
-    onEditMessage?.(editingId, draft);
-    onResendMessage?.(editingId);
-    cancelEdit();
-  }
+
+  const messages = conversation.messages || [];
 
   return (
     <KeyboardAvoidingView 
-      style={[styles.container, { backgroundColor: colors.bg }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
+        style={styles.container} 
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0} 
     >
-      <ScrollView
-        ref={scrollRef}
-        contentContainerStyle={styles.messagesWrap}
-        keyboardShouldPersistTaps="handled"
+      <ScrollView 
+        ref={scrollViewRef}
+        style={styles.scrollArea}
+        contentContainerStyle={styles.scrollContent}
+        onContentSizeChange={() => scrollToBottom()} 
       >
-        {messages.length === 0 ? (
-          <View style={styles.emptyWrap} />
-        ) : (
-          <>
-            {messages.map((m) => (
-              <View key={m.id} style={styles.messageRow}>
-                {editingId === m.id ? (
-                  <View style={[styles.editBox, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
+        {messages.map((msg, index) => {
+            // const isLastMessage = index === messages.length - 1; // Unused
+            const isUser = msg.role === "user";
+
+            return (
+            <View 
+              key={msg.id} 
+              style={[
+                styles.messageRow, 
+                isUser ? styles.rowReverse : styles.row
+              ]}
+            >
+              
+              <View style={[
+                styles.avatarContainer,
+                isUser ? styles.avatarUser : styles.avatarBot
+              ]}>
+                {isUser ? (
+                    userAvatar ? (
+                        <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
+                    ) : (
+                        <Text style={styles.avatarText}>{getInitials(userName)}</Text>
+                    )
+                ) : (
+                    <Bot size={16} color={isDark ? "#60a5fa" : "#2563eb"} />
+                )}
+              </View>
+
+              <View style={[
+                  styles.contentWrapper,
+                  isUser ? styles.alignEnd : styles.alignStart
+              ]}>
+
+                {editingId === msg.id ? (
+                  <View style={styles.editContainer}>
                     <TextInput
-                      ref={inputRef}
                       value={draft}
                       onChangeText={setDraft}
-                      style={[styles.editInput, { color: colors.text }]}
-                      placeholderTextColor={colors.placeholder}
                       multiline
-                      placeholder="Edit message..."
+                      style={styles.editInput}
+                      autoFocus
                     />
                     <View style={styles.editActions}>
                       <TouchableOpacity 
-                        style={[styles.saveBtn, { backgroundColor: colors.icon }]} 
-                        onPress={saveEdit}
+                        style={[styles.actionBtn, styles.saveBtn]} 
+                        onPress={() => {
+                            onEditMessage(msg.id, draft);
+                            setEditingId(null);
+                        }}
                       >
-                        <Check size={16} color={isDarkMode ? "#000" : "#fff"} />
-                        <Text style={[styles.saveBtnText, { color: isDarkMode ? "#000" : "#fff" }]}> Save</Text>
+                        <Check size={14} color={isDark ? "#000" : "#fff"} />
+                        <Text style={styles.saveBtnText}>Save</Text>
                       </TouchableOpacity>
                       
                       <TouchableOpacity 
-                        style={[styles.saveResendBtn, { borderColor: colors.border }]} 
-                        onPress={saveAndResend}
+                        style={styles.actionBtn} 
+                        onPress={() => setEditingId(null)}
                       >
-                        <Text style={[styles.saveResendText, { color: colors.text }]}> Save & Resend</Text>
-                      </TouchableOpacity>
-                      
-                      <TouchableOpacity style={styles.cancelBtn} onPress={cancelEdit}>
-                        <X size={18} color={colors.icon} />
+                         <Text style={styles.cancelBtnText}>Cancel</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 ) : (
-                  <Message role={m.role}>
-                    {/* Vertical Stack: Text Top, Icon Bottom */}
-                    <View style={{ flexDirection: 'column' }}>
-                      <Text style={{ color: m.role === "user" ? "#fff" : colors.text }}>
-                        {m.content}
-                      </Text>
-
-                      {m.role === "user" && (
-                        <View style={styles.msgMeta}>
-                          <TouchableOpacity onPress={() => startEdit(m)} style={styles.metaBtn}>
-                            <Pencil size={14} color="rgba(255,255,255,0.6)" />
-                          </TouchableOpacity>
+                  <View style={[
+                      styles.bubble,
+                      isUser ? styles.bubbleUser : styles.bubbleBot
+                  ]}>
+                     {msg.content ? (
+                        <View style={styles.markdownWrapper}>
+                            <Markdown style={markdownStyles}>
+                                {msg.content}
+                            </Markdown>
                         </View>
+                     ) : (
+                        <View style={styles.thinkingContainer}>
+                             <Text style={styles.thinkingText}>Thinking</Text>
+                             <ActivityIndicator size="small" color="#9ca3af" style={{marginLeft: 8}} />
+                        </View>
+                     )}
+                  </View>
+                )}
+                
+                {!editingId && !isThinking && (
+                   <View style={[
+                       styles.metaActions,
+                       isUser ? styles.justifyEnd : styles.justifyStart
+                   ]}>
+                      {isUser && (
+                         <TouchableOpacity 
+                            onPress={() => { setEditingId(msg.id); setDraft(msg.content); }} 
+                            style={styles.iconBtn}
+                         >
+                           <Pencil size={14} color="#9ca3af" />
+                         </TouchableOpacity>
                       )}
-                    </View>
-                  </Message>
+                      {!isUser && (
+                         <TouchableOpacity 
+                            onPress={() => handleCopy(msg.content)} 
+                            style={styles.iconBtn}
+                         >
+                             <Copy size={14} color="#9ca3af" />
+                         </TouchableOpacity>
+                      )}
+                   </View>
                 )}
               </View>
-            ))}
-
-            {isThinking && <ThinkingMessage onPause={onPauseThinking} colors={colors} />}
-          </>
-        )}
+            </View>
+            );
+        })}
       </ScrollView>
 
-      <Composer
-        ref={composerRef}
-        onSend={async (text: string) => {
-          if (!text.trim()) return;
-          setBusy(true);
-          await onSend?.(text);
-          setBusy(false);
-        }}
-        busy={busy}
-        theme={theme} 
-      />
+      <View style={styles.composerWrapper}>
+         <Composer 
+            ref={internalComposerRef} 
+            onSend={onSend} 
+            busy={isThinking} 
+            theme={isDark ? 'dark' : 'light'}
+         />
+      </View>
     </KeyboardAvoidingView>
   );
 });
 
 export default ChatPane;
 
-function ThinkingMessage({ onPause, colors }: { onPause?: () => void, colors: any }) {
-  const anim1 = useRef(new Animated.Value(0)).current;
-  const anim2 = useRef(new Animated.Value(0)).current;
-  const anim3 = useRef(new Animated.Value(0)).current;
+// --- STYLES ---
 
-  useEffect(() => {
-    const createPulse = (anim: Animated.Value, delay = 0) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(anim, { toValue: 1, duration: 400, useNativeDriver: true, delay }),
-          Animated.timing(anim, { toValue: 0.3, duration: 400, useNativeDriver: true }),
-        ]),
-      ).start();
-
-    createPulse(anim1, 0);
-    createPulse(anim2, 120);
-    createPulse(anim3, 240);
-
-    return () => {
-      anim1.stopAnimation();
-      anim2.stopAnimation();
-      anim3.stopAnimation();
-    };
-  }, []);
-
-  return (
-    <Message role="assistant">
-      <View style={thinkingStyles.container}>
-        <View style={thinkingStyles.dots}>
-          <Animated.View style={[thinkingStyles.dot, { opacity: anim1, backgroundColor: colors.textMuted }]} />
-          <Animated.View style={[thinkingStyles.dot, { opacity: anim2, marginHorizontal: 6, backgroundColor: colors.textMuted }]} />
-          <Animated.View style={[thinkingStyles.dot, { opacity: anim3, backgroundColor: colors.textMuted }]} />
-        </View>
-
-        <Text style={[thinkingStyles.text, { color: colors.textMuted }]}>AI is thinking...</Text>
-
-        <TouchableOpacity style={thinkingStyles.pauseBtn} onPress={onPause}>
-          <Square size={14} color={colors.text} />
-          <Text style={[thinkingStyles.pauseText, { color: colors.text }]}> Pause</Text>
-        </TouchableOpacity>
-      </View>
-    </Message>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  messagesWrap: { paddingTop: 0, paddingBottom: 8 },
-  emptyWrap: { flex: 1 }, 
-  messageRow: { paddingHorizontal: 6 },
-  editBox: { borderRadius: 10, borderWidth: 1, padding: 8 },
-  editInput: { minHeight: 56, maxHeight: 180, padding: 8, textAlignVertical: "top" },
-  editActions: { flexDirection: "row", marginTop: 8, alignItems: "center" },
-  saveBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, flexDirection: "row", alignItems: "center" },
-  saveBtnText: { fontWeight: "600", marginLeft: 6 },
-  saveResendBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, marginLeft: 8, flexDirection: "row", alignItems: "center" },
-  saveResendText: { marginLeft: 6 },
-  cancelBtn: { marginLeft: 8, padding: 6 },
-  
-  // Icon aligned to the right, under text
-  msgMeta: { 
-    flexDirection: "row", 
-    marginTop: 4, 
-    alignSelf: 'flex-end', 
-  },
-  metaBtn: { 
-    padding: 4, 
-  },
+const getStyles = (isDark: boolean) => StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: isDark ? "#09090b" : "#ffffff",
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 32,
+        backgroundColor: isDark ? "#09090b" : "#ffffff",
+    },
+    emptyIconCircle: {
+        marginBottom: 16,
+        padding: 16,
+        borderRadius: 999,
+        backgroundColor: isDark ? "#27272a" : "#f4f4f5",
+    },
+    emptyTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        marginBottom: 8,
+        color: isDark ? "#f4f4f5" : "#18181b",
+    },
+    emptyDesc: {
+        maxWidth: 300,
+        textAlign: 'center',
+        fontSize: 14,
+        color: "#71717a",
+    },
+    scrollArea: {
+        flex: 1,
+    },
+    scrollContent: {
+        paddingVertical: 16,
+        paddingHorizontal: 12,
+        paddingBottom: 40,
+    },
+    messageRow: {
+        flexDirection: 'row',
+        marginBottom: 24,
+        width: '100%',
+        maxWidth: 800, // Tablet constraint
+        alignSelf: 'center',
+    },
+    row: {
+        flexDirection: 'row',
+    },
+    rowReverse: {
+        flexDirection: 'row-reverse',
+    },
+    avatarContainer: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        marginTop: 4,
+        overflow: 'hidden',
+    },
+    avatarUser: {
+        marginLeft: 12,
+        backgroundColor: isDark ? "#27272a" : "#f4f4f5",
+        borderColor: isDark ? "#27272a" : "#e4e4e7",
+    },
+    avatarBot: {
+        marginRight: 12,
+        backgroundColor: isDark ? "#172554" : "#eff6ff",
+        borderColor: isDark ? "#1e3a8a" : "#bfdbfe",
+    },
+    avatarImage: {
+        width: '100%',
+        height: '100%',
+    },
+    avatarText: {
+        fontSize: 10,
+        fontWeight: 'bold',
+        color: isDark ? "#a1a1aa" : "#71717a",
+    },
+    contentWrapper: {
+        flex: 1,
+        flexDirection: 'column',
+    },
+    alignStart: {
+        alignItems: 'flex-start',
+    },
+    alignEnd: {
+        alignItems: 'flex-end',
+    },
+    bubble: {
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 16,
+        borderWidth: 1,
+        maxWidth: '100%',
+    },
+    bubbleUser: {
+        backgroundColor: isDark ? "#27272a" : "#f4f4f5",
+        borderColor: isDark ? "#3f3f46" : "#e4e4e7",
+        borderTopRightRadius: 2,
+    },
+    bubbleBot: {
+        backgroundColor: "transparent",
+        borderColor: "transparent", 
+        borderTopLeftRadius: 2,
+        paddingLeft: 0, 
+    },
+    markdownWrapper: {
+        // minWidth: 50, // Removed to prevent layout shifts
+    },
+    thinkingContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 8,
+    },
+    thinkingText: {
+        color: "#9ca3af",
+        fontSize: 14,
+    },
+    metaActions: {
+        flexDirection: 'row',
+        marginTop: 4,
+        opacity: 0.8,
+    },
+    justifyStart: {
+        justifyContent: 'flex-start',
+    },
+    justifyEnd: {
+        justifyContent: 'flex-end',
+    },
+    iconBtn: {
+        padding: 6,
+    },
+    editContainer: {
+        width: '100%',
+        maxWidth: '85%',
+        marginTop: 8,
+    },
+    editInput: {
+        backgroundColor: isDark ? "#18181b" : "#ffffff",
+        color: isDark ? "#fff" : "#000",
+        borderWidth: 1,
+        borderColor: isDark ? "#3f3f46" : "#e4e4e7",
+        borderRadius: 8,
+        padding: 10,
+        minHeight: 100,
+        textAlignVertical: 'top',
+    },
+    editActions: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        marginTop: 8,
+        gap: 8,
+    },
+    actionBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 6,
+    },
+    saveBtn: {
+        backgroundColor: isDark ? "#fff" : "#000",
+    },
+    saveBtnText: {
+        color: isDark ? "#000" : "#fff",
+        fontSize: 12,
+        fontWeight: '600',
+        marginLeft: 4,
+    },
+    cancelBtnText: {
+        color: isDark ? "#a1a1aa" : "#71717a",
+        fontSize: 12,
+    },
+    composerWrapper: {
+        padding: 16,
+        borderTopWidth: 1,
+        borderTopColor: isDark ? "#27272a" : "#e4e4e7",
+        backgroundColor: isDark ? "#09090b" : "#ffffff",
+    }
 });
 
-const thinkingStyles = StyleSheet.create({
-  container: { flexDirection: "row", alignItems: "center", gap: 10 as any },
-  dots: { flexDirection: "row", alignItems: "center" },
-  dot: { width: 8, height: 8, borderRadius: 8 },
-  text: { marginLeft: 10 },
-  pauseBtn: { marginLeft: "auto", flexDirection: "row", alignItems: "center" },
-  pauseText: { marginLeft: 6 },
+const getMarkdownStyles = (isDark: boolean) => StyleSheet.create({
+    body: {
+        color: isDark ? "#e4e4e7" : "#18181b",
+        fontSize: 15,
+        lineHeight: 24,
+    },
+    heading1: {
+        color: isDark ? "#fff" : "#000",
+        fontSize: 22,
+        fontWeight: 'bold',
+        marginBottom: 10,
+    },
+    heading2: {
+        color: isDark ? "#fff" : "#000",
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginTop: 10,
+        marginBottom: 8,
+    },
+    code_inline: {
+        backgroundColor: isDark ? "#27272a" : "#f4f4f5",
+        color: isDark ? "#e4e4e7" : "#18181b",
+        borderRadius: 4,
+        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    },
+    code_block: {
+        backgroundColor: isDark ? "#18181b" : "#27272a",
+        borderRadius: 8,
+        padding: 12,
+        marginVertical: 8,
+        borderColor: isDark ? "#3f3f46" : "#e4e4e7",
+        borderWidth: 1,
+    },
+    fence: {
+        backgroundColor: isDark ? "#18181b" : "#27272a",
+        borderColor: isDark ? "#3f3f46" : "#e4e4e7",
+        borderRadius: 8,
+        padding: 10,
+        color: isDark ? "#e4e4e7" : "#e4e4e7",
+    },
+    link: {
+        color: "#3b82f6",
+    },
+    list_item: {
+        marginVertical: 4,
+    }
 });
