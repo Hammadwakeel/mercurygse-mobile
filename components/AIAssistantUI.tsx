@@ -1,348 +1,414 @@
 // components/AIAssistantUI.tsx
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-    Alert,
-    BackHandler,
-    Platform,
-    StatusBar,
-    StyleSheet,
-    TouchableOpacity,
-    useWindowDimensions,
-    View
-} from "react-native";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  StatusBar,
+  StyleSheet,
+  useColorScheme,
+  View
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+// Components
 import ChatPane from "./ChatPane";
 import Header from "./Header";
 import Sidebar from "./Sidebar";
 
-import { getAvatarImage, getMe } from "../lib/api";
-import {
-    INITIAL_CONVERSATIONS,
-    INITIAL_FOLDERS,
-    INITIAL_TEMPLATES,
-} from "./mockData";
+// API
+import { api, ChatSession, Message, User } from "../lib/api";
 
-// --- TEMPORARY: Basic GhostIconButton ---
-function GhostIconButton({ label, children, onPress }: any) {
-  return (
-    <TouchableOpacity onPress={onPress} style={{ padding: 8 }}>
-      {children}
-    </TouchableOpacity>
-  );
-}
-
-type Conversation = any;
+// Helper for UUID generation in RN if crypto is not polyfilled
+const generateUUID = () => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
 
 export default function AIAssistantUI() {
-  const { width } = useWindowDimensions();
-  // We treat all screens as "mobile-like" for this full-screen drawer behavior
-  const isMobile = true; 
-
-  const [userData, setUserData] = useState<any | null>(null);
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
-  const [loadingUser, setLoadingUser] = useState(true);
-
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-
-  // load theme
-  useEffect(() => {
-    (async () => {
-      try {
-        const saved = await AsyncStorage.getItem("theme");
-        if (saved === "dark" || saved === "light") setTheme(saved);
-        else setTheme("light");
-      } catch {}
-    })();
-  }, []);
-
-  // persist theme
-  useEffect(() => {
-    (async () => {
-      try {
-        await AsyncStorage.setItem("theme", theme);
-      } catch {}
-    })();
-  }, [theme]);
-
-  // user fetch
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const accessToken = await AsyncStorage.getItem("accessToken");
-        if (accessToken) {
-          const user = await getMe(accessToken);
-          if (!mounted) return;
-          setUserData(user);
-          if (user?.avatar) {
-            try {
-              const avatarUrl = await getAvatarImage(user.avatar);
-              if (avatarUrl && mounted) setUserAvatar(avatarUrl);
-            } catch (err) {
-              console.warn("avatar load failed", err);
-            }
-          }
-        }
-      } catch (error) {
-        console.error("[v0] Error fetching user data:", error);
-      } finally {
-        if (mounted) setLoadingUser(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const systemScheme = useColorScheme();
+  const [mounted, setMounted] = useState(false);
+  const [userData, setUserData] = useState<User | null>(null);
   
-  const [conversations, setConversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS || []);
+  const [conversations, setConversations] = useState<ChatSession[]>([]);
+  
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [templates, setTemplates] = useState(INITIAL_TEMPLATES || []);
-  const [folders, setFolders] = useState(INITIAL_FOLDERS || []);
-
-  const [query, setQuery] = useState("");
-  
-  // State to toggle between Sidebar View and Chat View
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
-  const [thinkingConvId, setThinkingConvId] = useState<string | null>(null);
+  
+  // Refs for stream control
+  const isStreamingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // On mobile, "collapsed" usually doesn't apply cleanly like desktop, 
+  // but we keep the state to satisfy child prop requirements.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false); 
+  
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const composerRef = useRef<any>(null);
 
-  // Handle hardware back button on Android to close sidebar instead of exiting app
+  // 1. Initialization
   useEffect(() => {
-    const backAction = () => {
-      if (sidebarOpen) {
-        setSidebarOpen(false);
-        return true;
-      }
-      return false;
+    setMounted(true);
+    
+    const init = async () => {
+      // Theme Logic
+      try {
+        const savedTheme = await AsyncStorage.getItem("theme");
+        if (savedTheme === 'dark' || savedTheme === 'light') {
+          setTheme(savedTheme);
+        } else {
+          setTheme(systemScheme === 'dark' ? 'dark' : 'light');
+        }
+
+        const savedSidebar = await AsyncStorage.getItem("sidebar-collapsed-state");
+        if (savedSidebar) setSidebarCollapsed(JSON.parse(savedSidebar));
+      } catch (e) {}
+
+      fetchData();
     };
 
-    const backHandler = BackHandler.addEventListener(
-      "hardwareBackPress",
-      backAction
-    );
-
-    return () => backHandler.remove();
-  }, [sidebarOpen]);
-
-  // derived lists
-  const filtered = useMemo(() => {
-    if (!query.trim()) return conversations;
-    const q = query.toLowerCase();
-    return conversations.filter(
-      (c) =>
-        (c.title || "").toLowerCase().includes(q) ||
-        (c.preview || "").toLowerCase().includes(q)
-    );
-  }, [conversations, query]);
-
-  const pinned = useMemo(
-    () =>
-      filtered
-        .filter((c) => c.pinned)
-        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)),
-    [filtered]
-  );
-
-  const recent = useMemo(
-    () =>
-      filtered
-        .filter((c) => !c.pinned)
-        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-        .slice(0, 10),
-    [filtered]
-  );
-
-  useEffect(() => {
-    if (!selectedId && conversations.length > 0) {
-       setSelectedId(conversations[0].id);
-    } else if (conversations.length === 0) {
-       createNewChat();
-    }
+    init();
   }, []);
 
-  // actions
-  function togglePin(id: string) {
-    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, pinned: !c.pinned } : c)));
-  }
+  // 2. Persist Theme
+  useEffect(() => {
+    if (!mounted) return;
+    AsyncStorage.setItem("theme", theme).catch(() => {});
+  }, [theme, mounted]);
 
-  function createNewChat() {
-    const id = Math.random().toString(36).slice(2);
-    const now = new Date().toISOString();
-    const item: Conversation = {
-      id,
-      title: "New Chat",
-      updatedAt: now,
-      messageCount: 0,
-      preview: "Say hello to start...",
-      pinned: false,
-      folder: null,
-      messages: [],
-    };
-    setConversations((prev) => [item, ...prev]);
-    setSelectedId(id);
-    setSidebarOpen(false); // Switch to chat view after creating
-  }
+  const fetchData = async () => {
+    try {
+      const [user, chats] = await Promise.all([
+        api.user.getProfile().catch(() => null),
+        api.chat.list().catch(() => [])
+      ]);
+      
+      if (user) setUserData(user);
+      if (chats) setConversations(chats);
+    } catch (e) { console.error(e); }
+  };
 
-  function createFolder() {
-    if (Platform.OS === "ios" && Alert.prompt) {
-      Alert.prompt("Folder name", undefined, (name) => {
-        if (!name) return;
-        if (folders.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
-          Alert.alert("Folder exists", "Folder already exists.");
-          return;
-        }
-        setFolders((prev) => [...prev, { id: Math.random().toString(36).slice(2), name }]);
-      });
-      return;
+  const refreshConversations = async () => {
+     const chats = await api.chat.list().catch(() => []);
+     setConversations(chats);
+  };
+
+  // Prevent clearing messages if AI is currently streaming
+  useEffect(() => {
+    if (isStreamingRef.current) return; 
+
+    if (!selectedId || selectedId.startsWith("new_")) {
+        setMessages([]);
+        return;
     }
-    Alert.alert("Create folder", "Feature not supported on this platform.", [{ text: "Ok" }]);
-  }
 
-  function sendMessage(convId: string, content: string) {
-    if (!content.trim()) return;
-    const now = new Date().toISOString();
-    const userMsg = { id: Math.random().toString(36).slice(2), role: "user", content, createdAt: now };
+    const loadMessages = async () => {
+      try {
+        const msgs = await api.chat.getDetails(selectedId);
+        setMessages(msgs || []);
+      } catch (e) {
+        console.error("Failed to load messages", e);
+      }
+    };
+    loadMessages();
+  }, [selectedId]);
 
-    setConversations((prev) =>
-      prev.map((c) => {
-        if (c.id !== convId) return c;
-        const msgs = [...(c.messages || []), userMsg];
-        return {
-          ...c,
-          messages: msgs,
-          updatedAt: now,
-          messageCount: msgs.length,
-          preview: content.slice(0, 80),
-        };
-      })
-    );
+  const createNewChat = () => {
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    setSelectedId(null);
+    setMessages([]);
+    setSidebarOpen(false);
+  };
 
-    setIsThinking(true);
-    setThinkingConvId(convId);
-
-    const currentConvId = convId;
-    setTimeout(() => {
-      setIsThinking(false);
-      setThinkingConvId(null);
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id !== currentConvId) return c;
-          const ack = `Got it — I'll help with that.`;
-          const asstMsg = {
-            id: Math.random().toString(36).slice(2),
-            role: "assistant",
-            content: ack,
-            createdAt: new Date().toISOString(),
-          };
-          const msgs = [...(c.messages || []), asstMsg];
-          return {
-            ...c,
-            messages: msgs,
-            updatedAt: new Date().toISOString(),
-            messageCount: msgs.length,
-            preview: asstMsg.content.slice(0, 80),
-          };
-        })
-      );
-    }, 1200);
-  }
-
-  function editMessage(convId: string, messageId: string, newContent: string) {
-    const now = new Date().toISOString();
-    setConversations((prev) =>
-      prev.map((c) => {
-        if (c.id !== convId) return c;
-        const msgs = (c.messages || []).map((m: any) =>
-          m.id === messageId ? { ...m, content: newContent, editedAt: now } : m
-        );
-        return {
-          ...c,
-          messages: msgs,
-          preview: msgs[msgs.length - 1]?.content?.slice(0, 80) || c.preview,
-        };
-      })
-    );
-  }
-
-  function resendMessage(convId: string, messageId: string) {
-    const conv = conversations.find((c) => c.id === convId);
-    const msg = conv?.messages?.find((m: any) => m.id === messageId);
-    if (!msg) return;
-    sendMessage(convId, msg.content);
-  }
-
-  function pauseThinking() {
+  const handlePauseThinking = () => {
+    if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+    }
     setIsThinking(false);
-    setThinkingConvId(null);
-  }
+    isStreamingRef.current = false;
+  };
 
-  const composerRef = useRef<any>(null);
-  const selected = conversations.find((c) => c.id === selectedId) || null;
+  const handleSend = async (content: string) => {
+    if (!content.trim()) return;
+
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
+    const tempUserMsg: Message = {
+      id: generateUUID(), 
+      chat_id: selectedId || "temp",
+      role: "user",
+      content: content,
+      created_at: new Date().toISOString(),
+      is_summarized: false
+    };
+    
+    const tempAiMsg: Message = {
+      id: generateUUID(),
+      chat_id: selectedId || "temp",
+      role: "assistant",
+      content: "",
+      created_at: new Date().toISOString(),
+      is_summarized: false
+    };
+
+    isStreamingRef.current = true;
+    setIsThinking(true);
+    setMessages(prev => [...prev, tempUserMsg, tempAiMsg]);
+
+    let currentResponse = "";
+    let activeThreadId = selectedId;
+
+    await api.streamMessage(
+      content,
+      selectedId,
+      (chunk, newThreadId) => {
+        currentResponse += chunk;
+        if (newThreadId && !activeThreadId) {
+            activeThreadId = newThreadId;
+            setSelectedId(newThreadId);
+            refreshConversations(); 
+        }
+        setMessages(prev => {
+            const newArr = [...prev];
+            const lastIdx = newArr.length - 1;
+            if (lastIdx >= 0 && newArr[lastIdx].role === "assistant") {
+                newArr[lastIdx] = { ...newArr[lastIdx], content: currentResponse };
+            }
+            return newArr;
+        });
+      },
+      (error) => {
+        console.error("Stream error:", error);
+        setMessages(prev => [...prev, { 
+            id: "err", chat_id: "err", role: "assistant", 
+            content: "Error: " + error, created_at: new Date().toISOString(), is_summarized: false 
+        }]);
+      },
+      async () => {
+        setIsThinking(false);
+        isStreamingRef.current = false;
+        abortControllerRef.current = null;
+        
+        // Refresh to get real IDs from DB
+        if (activeThreadId) {
+            try {
+                const fresh = await api.chat.getDetails(activeThreadId);
+                if (fresh) setMessages(fresh);
+            } catch (e) {}
+        }
+      },
+      ac.signal
+    );
+  };
+
+  const handleEditMessage = async (msgId: string, newContent: string) => {
+    // 1. Abort any running streams
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
+    // 2. Manipulate State
+    setMessages(prev => {
+        const msgIndex = prev.findIndex(m => m.id === msgId);
+        if (msgIndex === -1) return prev;
+
+        const history = prev.slice(0, msgIndex);
+        const updatedUserMsg = { ...prev[msgIndex], content: newContent };
+
+        const newAiMsg: Message = {
+            id: generateUUID(),
+            chat_id: selectedId || "",
+            role: "assistant",
+            content: "",
+            created_at: new Date().toISOString(),
+            is_summarized: false
+        };
+
+        return [...history, updatedUserMsg, newAiMsg];
+    });
+    
+    // 3. Set flags for UI
+    isStreamingRef.current = true;
+    setIsThinking(true);
+
+    let currentResponse = "";
+
+    // 4. Call API
+    await api.editMessage(
+        msgId, 
+        newContent,
+        (chunk) => {
+            currentResponse += chunk;
+            setMessages(prev => {
+                const newArr = [...prev];
+                const lastIdx = newArr.length - 1;
+                if (lastIdx >= 0 && newArr[lastIdx].role === "assistant") {
+                    newArr[lastIdx] = { ...newArr[lastIdx], content: currentResponse };
+                }
+                return newArr;
+            });
+        },
+        async () => {
+            setIsThinking(false);
+            isStreamingRef.current = false;
+            abortControllerRef.current = null;
+
+            if (selectedId) {
+                try {
+                    const freshMsgs = await api.chat.getDetails(selectedId);
+                    if (freshMsgs) setMessages(freshMsgs);
+                } catch (e) { console.error(e); }
+            }
+        },
+        ac.signal
+    );
+  };
+
+  const handleDeleteChat = async (id: string) => {
+    try {
+        await api.chat.delete(id);
+        setConversations(prev => prev.filter(c => c.id !== id));
+        if (selectedId === id) {
+            setSelectedId(null);
+            setMessages([]);
+        }
+    } catch (e) { console.error(e); }
+  };
+
+  if (!mounted) {
+    // Loading state
+    return <View style={[styles.container, styles.loadingBg]} />;
+  }
+  
+  const activeConversation = {
+      id: selectedId || "new",
+      title: selectedId ? "Chat" : "New Chat",
+      messages: messages,
+      updatedAt: new Date().toISOString(),
+      preview: "",
+      pinned: false,
+      folder: "",
+      messageCount: messages.length
+  };
+
+  const activeChat = conversations.find(c => c.id === selectedId);
+  const displayTitle = activeChat ? activeChat.title : (selectedId ? "Chat" : "New Chat");
+
+  const isDark = theme === 'dark';
+  const bgStyle = { backgroundColor: isDark ? "#09090b" : "#F8FAFB" };
 
   return (
-    <View style={[styles.container, theme === "dark" ? styles.dark : styles.light]}>
+    <SafeAreaView style={[styles.container, bgStyle]}>
       <StatusBar 
-        translucent 
-        backgroundColor="transparent" 
-        barStyle={theme === "dark" ? "light-content" : "dark-content"} 
+        barStyle={isDark ? "light-content" : "dark-content"} 
+        backgroundColor={isDark ? "#09090b" : "#F8FAFB"}
       />
       
-      {/* LOGIC:
-        If sidebarOpen is TRUE, we show ONLY the Sidebar (Fullscreen).
-        If sidebarOpen is FALSE, we show ONLY the Chat (Fullscreen).
+      {/* Layout Strategy: 
+        1. Main Chat Area serves as the base layer.
+        2. Sidebar sits on top (absolute) if visible.
       */}
-
-      {sidebarOpen ? (
-        <Sidebar
-          theme={theme}
-          setTheme={setTheme}
-          conversations={conversations}
-          pinned={pinned}
-          recent={recent}
-          selectedId={selectedId}
-          onSelect={(id: string) => {
-            setSelectedId(id);
-            setSidebarOpen(false); // Close sidebar on selection
-          }}
-          togglePin={togglePin}
-          createNewChat={createNewChat}
-          userData={userData}
-          userAvatar={userAvatar}
-          // Pass a prop to let Sidebar know how to close itself
-          onClose={() => setSidebarOpen(false)}
+      
+      <View style={styles.mainContent}>
+        <Header 
+             sidebarCollapsed={sidebarCollapsed} 
+             // In RN, we usually "open" the sidebar, so logic might differ slightly from desktop toggle
+             setSidebarOpen={() => setSidebarOpen(true)} 
+             title={displayTitle} 
+             userData={userData}
+             createNewChat={createNewChat}
+             theme={theme}
         />
-      ) : (
-        <View style={styles.main}>
-          {/* Header controls opening the sidebar now */}
-          <Header 
-            theme={theme} // <--- Pass theme here
-            onOpenSidebar={() => setSidebarOpen(true)} 
-          />
-          <ChatPane
-            ref={composerRef}
-            conversation={selected}
-            onSend={(content: string) => selected && sendMessage(selected.id, content)}
-            onEditMessage={(messageId: string, newContent: string) => selected && editMessage(selected.id, messageId, newContent)}
-            onResendMessage={(messageId: string) => selected && resendMessage(selected.id, messageId)}
-            isThinking={isThinking && thinkingConvId === selected?.id}
-            onPauseThinking={pauseThinking}
-            userName={userData?.name}
-            theme={theme}
-          />
+        
+        <ChatPane
+          ref={composerRef}
+          conversation={activeConversation}
+          onSend={handleSend}
+          onEditMessage={handleEditMessage} 
+          onResendMessage={() => {}} 
+          isThinking={isThinking}
+          onPauseThinking={handlePauseThinking}
+          userName={userData?.full_name}
+          theme={theme}
+        />
+      </View>
+
+      {/* Sidebar Overlay */}
+      {sidebarOpen && (
+        <View style={StyleSheet.absoluteFill}>
+            {/* Transparent backdrop to close on click */}
+            <View 
+                style={styles.backdrop} 
+                onTouchEnd={() => setSidebarOpen(false)} 
+            />
+            {/* The Sidebar Itself - We constrain width to 80% */}
+            <View style={[styles.sidebarWrapper, { backgroundColor: isDark ? "#18181b" : "#fff" }]}>
+                <Sidebar
+                    open={sidebarOpen}
+                    onClose={() => setSidebarOpen(false)}
+                    theme={theme}
+                    setTheme={setTheme}
+                    collapsed={{ recent: false }} 
+                    setCollapsed={() => {}}
+                    selectedId={selectedId}
+                    onSelect={(id) => {
+                        setSelectedId(id);
+                        setSidebarOpen(false); 
+                    }}
+                    sidebarCollapsed={sidebarCollapsed}
+                    setSidebarCollapsed={(v) => {
+                        setSidebarCollapsed(v);
+                        AsyncStorage.setItem("sidebar-collapsed-state", JSON.stringify(v)).catch(()=>{});
+                    }}
+                    conversations={conversations} 
+                    userData={userData}
+                    userAvatar={userData?.avatar_url}
+                    onDeleteChat={handleDeleteChat}
+                    createNewChat={createNewChat}
+                />
+            </View>
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  light: { backgroundColor: "#F8FAFB" },
-  dark: { backgroundColor: "#0B1220" },
-  main: {
+  container: {
     flex: 1,
-    backgroundColor: "transparent",
   },
+  loadingBg: {
+    backgroundColor: "#F8FAFB",
+  },
+  mainContent: {
+    flex: 1,
+    flexDirection: 'column',
+    position: 'relative',
+    zIndex: 1,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    zIndex: 99,
+  },
+  sidebarWrapper: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: '85%', // Mobile drawer width
+    maxWidth: 320,
+    zIndex: 100,
+    shadowColor: "#000",
+    shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 10,
+  }
 });
