@@ -1,5 +1,3 @@
-// components/AIAssistantUI.tsx
-
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -46,6 +44,9 @@ export default function AIAssistantUI() {
   // but we keep the state to satisfy child prop requirements.
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false); 
   
+  // Collapsed sections state
+  const [collapsedSections, setCollapsedSections] = useState({ recent: false, pinned: false });
+
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const composerRef = useRef<any>(null);
 
@@ -335,6 +336,7 @@ export default function AIAssistantUI() {
           isThinking={isThinking}
           onPauseThinking={handlePauseThinking}
           userName={userData?.full_name}
+          userAvatar={userData?.avatar_url} // Pass avatar here if ChatPane supports it
           theme={theme}
         />
       </View>
@@ -347,15 +349,18 @@ export default function AIAssistantUI() {
                 style={styles.backdrop} 
                 onTouchEnd={() => setSidebarOpen(false)} 
             />
-            {/* The Sidebar Itself - We constrain width to 80% */}
+            {/* The Sidebar Itself - We constrain width to 85% */}
             <View style={[styles.sidebarWrapper, { backgroundColor: isDark ? "#18181b" : "#fff" }]}>
                 <Sidebar
                     open={sidebarOpen}
                     onClose={() => setSidebarOpen(false)}
                     theme={theme}
                     setTheme={setTheme}
-                    collapsed={{ recent: false }} 
-                    setCollapsed={() => {}}
+                    
+                    // ✅ FIX: Use proper state for collapsed sections
+                    collapsed={collapsedSections} 
+                    setCollapsed={setCollapsedSections}
+                    
                     selectedId={selectedId}
                     onSelect={(id) => {
                         setSelectedId(id);
@@ -368,7 +373,7 @@ export default function AIAssistantUI() {
                     }}
                     conversations={conversations} 
                     userData={userData}
-                    userAvatar={userData?.avatar_url}
+                    // ❌ REMOVED: userAvatar={userData?.avatar_url} (Sidebar reads userData directly)
                     onDeleteChat={handleDeleteChat}
                     createNewChat={createNewChat}
                 />
