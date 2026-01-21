@@ -1,46 +1,48 @@
-// app/profile.tsx
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
+import { useRouter } from "expo-router";
+import { ArrowLeft, Upload, User as UserIcon } from "lucide-react-native";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
-  View,
+  useColorScheme,
+  View
 } from "react-native";
 
-import { Button } from "../components/Button";
-import { Input } from "../components/Input";
-import { Label } from "../components/Label";
-import { getMe, updateMe } from "../lib/api";
+import ThemeToggle from "../components/ThemeToggle";
+import { api } from "../lib/api";
 
-/**
- * Updated Profile screen:
- * - Uses launchImageLibraryAsync without referencing deprecated constants
- * - Guards against missing/undefined uri from the picker result
- * - Uses functional setState when updating from async effects
- * - Shows clearer error messages and logs server responses for debugging
- */
+export default function ProfilePage() {
+  const router = useRouter();
+  const systemScheme = useColorScheme();
+  // Simple local theme toggle state (demo purpose)
+  const [theme, setTheme] = useState<"light" | "dark">(systemScheme || "light");
+  const isDark = theme === "dark";
+  const styles = getStyles(isDark);
 
-export default function ProfileScreen() {
+  // State
+  const [mounted, setMounted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  
+  const [profileImage, setProfileImage] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  const [profileImageUri, setProfileImageUri] = useState(null as string | null);
-  const [previewUri, setPreviewUri] = useState(null as string | null);
-  const [avatarForUpload, setAvatarForUpload] = useState<any | null>(null);
-
+  // Form State
   const [formData, setFormData] = useState({
     name: "",
     email: "",
-    currentPassword: "",
     newPassword: "",
     confirmPassword: "",
   });
@@ -48,279 +50,530 @@ export default function ProfileScreen() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successMessage, setSuccessMessage] = useState("");
 
-  // Load user data
+  // --- 1. Load User Data ---
   useEffect(() => {
-    let mounted = true;
-    (async () => {
+    setMounted(true);
+    const loadUserData = async () => {
       try {
-        const tokenJson = await AsyncStorage.getItem("authToken");
-        const accessToken =
-          (await AsyncStorage.getItem("accessToken")) ??
-          (tokenJson ? JSON.parse(tokenJson).accessToken : null);
+        const user = await api.user.getProfile();
+        
+        setFormData((prev) => ({
+          ...prev,
+          name: user.full_name || "",
+          email: user.email || "",
+        }));
 
-        if (!accessToken) {
-          router.replace("/login");
-          return;
-        }
-
-        const user = await getMe(accessToken);
-        if (!mounted) return;
-
-        setIsAuthenticated(true);
-        // use functional update to avoid stale closure
-        setFormData((prev) => ({ ...prev, name: user.name ?? "", email: user.email ?? "" }));
-
-        if (user.avatar) {
-          const maybeFileId = user.avatar.split("/").pop();
-          const baseUrl = "https://hammad712-rohde-auth.hf.space";
-          setProfileImageUri(maybeFileId ? `${baseUrl}/auth/avatar/${maybeFileId}` : user.avatar);
+        if (user.avatar_url) {
+          setProfileImage(user.avatar_url);
         }
       } catch (err) {
-        console.error("[v0] load user error:", err);
-        // If fetching user fails, route to login (session might be invalid)
-        router.replace("/login");
+        console.error("Error loading user:", err);
+        // Cast to 'any' to fix router typing issue
+        router.replace("/login" as any);
       } finally {
-        if (mounted) setIsLoading(false);
+        setIsLoading(false);
       }
-    })();
+    };
 
-    return () => { mounted = false; };
+    loadUserData();
   }, []);
 
-  // Image picker (updated to tolerate different expo-image-picker versions)
+  // --- 2. Handlers ---
+
+  const handleInputChange = (field: string, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: "" }));
+  };
+
   const pickImage = async () => {
-    try {
-      if (Platform.OS !== "web") {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== "granted") {
-          Alert.alert("Permission required", "Permission to access photos is required.");
-          return;
-        }
-      }
-
-      // Do not reference deprecated constants. Passing only quality + allowsEditing is safe.
-      const res = await ImagePicker.launchImageLibraryAsync({
-        quality: 0.8,
-        allowsEditing: true,
-        aspect: [1, 1],
-      });
-
-      // new API returns { canceled, assets: [{ uri, ... }] }
-      if (res.canceled) {
-        return;
-      }
-
-      const asset = (res as any).assets?.[0];
-      const uri = asset?.uri ?? (res as any).uri ?? null;
-
-      if (!uri) {
-        console.warn("Image picker returned no uri:", res);
-        Alert.alert("Error", "Could not read the selected image. Please try again.");
-        return;
-      }
-
-      // compute filename/mime safely
-      const maybeName = uri.split("/").pop() ?? `avatar.jpg`;
-      const match = /\.(\w+)$/.exec(maybeName);
-      const ext = match ? match[1].toLowerCase() : "jpg";
-      const mime = ext === "png" ? "image/png" : "image/jpeg";
-
-      // On Android content URIs may be like content://..., still accepted by RN fetch when appended to FormData
-      const avatarObject = {
-        uri,
-        name: maybeName,
-        type: mime,
-      };
-
-      setPreviewUri(uri);
-      setAvatarForUpload(avatarObject);
-    } catch (err) {
-      console.error("Image pick error:", err);
-      Alert.alert("Error", "Could not pick image.");
-    }
-  };
-
-  // Input handler
-  const handleChange = (key: keyof typeof formData, value: string) => {
-    setFormData((prev) => ({ ...prev, [key]: value }));
-    if (errors[key]) setErrors((prev) => ({ ...prev, [key]: "" }));
-  };
-
-  // Save profile: call updateMe from lib/api which expects a File-like object for avatar (RN accepts {uri,name,type})
-  const handleSave = async () => {
-    setErrors({});
-    setSuccessMessage("");
-
-    const newErrors: Record<string, string> = {};
-    if (!formData.name.trim()) newErrors.name = "Name is required";
-    if (!formData.email.trim()) newErrors.email = "Email is required";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = "Invalid email";
-
-    if (formData.newPassword || formData.confirmPassword) {
-      if (!formData.currentPassword) newErrors.currentPassword = "Current password required";
-      if (formData.newPassword.length > 0 && formData.newPassword.length < 8)
-        newErrors.newPassword = "Password must be at least 8 characters";
-      if (formData.newPassword !== formData.confirmPassword)
-        newErrors.confirmPassword = "Passwords do not match";
-    }
-
-    if (Object.keys(newErrors).length > 0) {
-      setErrors(newErrors);
+    // Request permission first
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
       return;
     }
 
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.5,
+      base64: true, // We need base64 for preview/upload simulation
+    });
+
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      
+      // Simulate data URL format for preview
+      const dataUri = `data:${asset.mimeType};base64,${asset.base64}`;
+      setPreviewImage(dataUri);
+      setErrors((prev) => ({ ...prev, profileImage: "" }));
+    }
+  };
+
+  const handleSaveProfile = async () => {
     setIsSaving(true);
+    setErrors({});
+    setSuccessMessage("");
+
     try {
-      const tokenJson = await AsyncStorage.getItem("authToken");
-      const accessToken =
-        (await AsyncStorage.getItem("accessToken")) ??
-        (tokenJson ? JSON.parse(tokenJson).accessToken : null);
-      if (!accessToken) {
-        router.replace("/login");
+      const newErrors: Record<string, string> = {};
+      if (!formData.name.trim()) newErrors.name = "Name is required";
+      
+      if (formData.newPassword || formData.confirmPassword) {
+        if (formData.newPassword.length < 6) {
+          newErrors.newPassword = "Password must be at least 6 characters";
+        }
+        if (formData.newPassword !== formData.confirmPassword) {
+          newErrors.confirmPassword = "Passwords do not match";
+        }
+      }
+
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        setIsSaving(false);
         return;
       }
 
-      // If avatarForUpload exists, make sure it has uri,name,type — this is what fetch + FormData expects in RN
-      const avatarToSend = avatarForUpload
-        ? { uri: avatarForUpload.uri, name: avatarForUpload.name, type: avatarForUpload.type }
-        : undefined;
+      const payload: { full_name?: string; avatar_url?: string; password?: string } = {
+        full_name: formData.name,
+      };
 
-      // call lib/api.updateMe which constructs a FormData and sends it
-      // Cast avatarToSend to 'any' to bypass strict File/Blob type check in RN environment
-      await updateMe(
-        accessToken,
-        formData.name,
-        formData.email,
-        formData.newPassword || undefined,
-        avatarToSend as any
-      );
-
-      // show newly selected preview (local) as profile picture
-      if (previewUri) {
-        setProfileImageUri(previewUri);
-        setPreviewUri(null);
-        setAvatarForUpload(null);
+      if (previewImage) {
+        payload.avatar_url = previewImage;
       }
 
-      setFormData((p) => ({ ...p, currentPassword: "", newPassword: "", confirmPassword: "" }));
+      if (formData.newPassword) {
+        payload.password = formData.newPassword;
+      }
+
+      // Call API
+      const updatedUser = await api.user.updateProfile(payload);
+
+      if (updatedUser.avatar_url) {
+        setProfileImage(updatedUser.avatar_url);
+      }
+      setPreviewImage(null);
+      
+      // Update Cache
+      const cachedUser = await AsyncStorage.getItem("user");
+      if (cachedUser) {
+        const parsed = JSON.parse(cachedUser);
+        await AsyncStorage.setItem("user", JSON.stringify({ 
+          ...parsed, 
+          ...updatedUser 
+        }));
+      }
+
+      setFormData((prev) => ({
+        ...prev,
+        newPassword: "",
+        confirmPassword: "",
+      }));
+
       setSuccessMessage("Profile updated successfully!");
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err: unknown) {
-      // Provide more debugging info for upload failures
-      console.error("[v0] save profile:", err);
-      let msg = "Failed to save profile";
-      if (err instanceof Error) msg = err.message;
-      // show a helpful alert with the error message
-      Alert.alert("Error", msg);
-      setErrors({ submit: msg });
+
+    } catch (error: any) {
+      console.error("Save error:", error);
+      Alert.alert("Error", error.message || "Failed to save profile");
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleLogout = async () => {
-    await AsyncStorage.multiRemove(["accessToken", "refreshToken", "tokenType", "authToken"]);
-    router.replace("/login");
+    await api.auth.logout();
+    router.replace("/login" as any);
   };
 
-  if (isLoading) {
+  // --- 3. Loading State ---
+  if (!mounted || isLoading) {
     return (
-      <View style={styles.loadingWrap}>
-        <ActivityIndicator size="large" />
-        <Text style={styles.loadingText}>Loading...</Text>
+      <View style={[styles.container, styles.center]}>
+        <ActivityIndicator size="large" color={isDark ? "#fff" : "#000"} />
+        <Text style={styles.loadingText}>Loading profile...</Text>
       </View>
     );
   }
 
-  if (!isAuthenticated) return null;
-
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.headerTitle}>Profile Settings</Text>
-        <Text style={styles.headerSubtitle}>Manage your account information and preferences</Text>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+      
+      {/* Background (Solid color for performance) */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none" />
 
-        {successMessage ? <View style={styles.successBox}><Text style={styles.successText}>{successMessage}</Text></View> : null}
-        {errors.submit ? <View style={styles.errorBox}><Text style={styles.errorText}>{errors.submit}</Text></View> : null}
-
-        {/* Avatar */}
-        <View style={styles.avatarWrap}>
-          <View style={styles.avatarOuter}>
-            {previewUri || profileImageUri ? (
-              <Image source={{ uri: previewUri || profileImageUri! }} style={styles.avatarImage} />
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarPlaceholderText}>No image</Text>
-              </View>
-            )}
-          </View>
-          <TouchableOpacity onPress={pickImage} style={styles.avatarButton}>
-            <Text style={styles.avatarButtonText}>Upload</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Name */}
-        <Label>Full Name</Label>
-        <Input value={formData.name} onChangeText={(v) => handleChange("name", v)} placeholder="Your full name" />
-        {errors.name ? <Text style={styles.fieldError}>{errors.name}</Text> : null}
-
-        {/* Email */}
-        <Label>Email Address</Label>
-        <Input
-          value={formData.email}
-          onChangeText={(v) => handleChange("email", v)}
-          placeholder="you@example.com"
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
-        {errors.email ? <Text style={styles.fieldError}>{errors.email}</Text> : null}
-
-        {/* Password */}
-        <View style={styles.passwordBox}>
-          <Text style={styles.passwordTitle}>Change Password (Optional)</Text>
-
-          <Label>Current Password</Label>
-          <Input secureTextEntry value={formData.currentPassword} onChangeText={(v) => handleChange("currentPassword", v)} placeholder="Enter your current password" />
-          {errors.currentPassword ? <Text style={styles.fieldError}>{errors.currentPassword}</Text> : null}
-
-          <Label>New Password</Label>
-          <Input secureTextEntry value={formData.newPassword} onChangeText={(v) => handleChange("newPassword", v)} placeholder="Enter your new password" />
-          {errors.newPassword ? <Text style={styles.fieldError}>{errors.newPassword}</Text> : null}
-
-          <Label>Confirm New Password</Label>
-          <Input secureTextEntry value={formData.confirmPassword} onChangeText={(v) => handleChange("confirmPassword", v)} placeholder="Confirm your new password" />
-          {errors.confirmPassword ? <Text style={styles.fieldError}>{errors.confirmPassword}</Text> : null}
-        </View>
-
-        <View style={styles.actionsRow}>
-          <Button title={isSaving ? "Saving..." : "Save Changes"} onPress={handleSave} disabled={isSaving} />
-          <Button title="Sign Out" variant="outline" onPress={handleLogout} />
-        </View>
+      {/* Theme Toggle Top Right */}
+      <View style={styles.topRight}>
+        <ThemeToggle theme={theme} setTheme={setTheme} />
       </View>
-    </ScrollView>
+
+      {/* Back Button Top Left */}
+      <TouchableOpacity
+        onPress={() => router.back()}
+        style={styles.topLeft}
+      >
+        <ArrowLeft size={20} color={isDark ? "#a1a1aa" : "#52525b"} />
+        <Text style={styles.backText}>Back</Text>
+      </TouchableOpacity>
+
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      >
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          
+          <View style={styles.card}>
+            
+            {/* Header */}
+            <View style={styles.cardHeader}>
+              <Text style={styles.title}>Profile Settings</Text>
+              <Text style={styles.subtitle}>Manage your account information</Text>
+            </View>
+
+            <View style={styles.cardBody}>
+              
+              {/* Success Message */}
+              {successMessage ? (
+                <View style={styles.successBox}>
+                  <Text style={styles.successText}>{successMessage}</Text>
+                </View>
+              ) : null}
+
+              {/* Avatar Section */}
+              <View style={styles.avatarSection}>
+                <View style={styles.avatarWrapper}>
+                  {previewImage || profileImage ? (
+                    <Image 
+                      source={{ uri: previewImage || profileImage || "" }} 
+                      style={styles.avatarImage} 
+                    />
+                  ) : (
+                    <View style={styles.avatarPlaceholder}>
+                      <UserIcon size={48} color={isDark ? "#71717a" : "#a1a1aa"} />
+                    </View>
+                  )}
+                  
+                  {/* Upload Button Overlay */}
+                  <TouchableOpacity
+                    onPress={pickImage}
+                    style={styles.uploadBtn}
+                    activeOpacity={0.8}
+                  >
+                    <Upload size={16} color={isDark ? "#000" : "#fff"} />
+                  </TouchableOpacity>
+                </View>
+                
+                <Text style={styles.avatarHint}>Tap icon to change photo</Text>
+                {errors.profileImage ? (
+                   <Text style={styles.errorText}>{errors.profileImage}</Text>
+                ) : null}
+              </View>
+
+              <View style={styles.divider} />
+
+              {/* Form Fields */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Full Name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={formData.name}
+                  onChangeText={(val) => handleInputChange('name', val)}
+                  placeholderTextColor={isDark ? "#52525b" : "#a1a1aa"}
+                />
+                {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Email Address</Text>
+                <TextInput
+                  style={[styles.input, styles.disabledInput]}
+                  value={formData.email}
+                  editable={false}
+                />
+              </View>
+
+              {/* Password Section */}
+              <View style={styles.passwordSection}>
+                <Text style={styles.sectionTitle}>Change Password</Text>
+                
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>New Password</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: isDark ? "#000" : "#fff" }]}
+                    placeholder="••••••"
+                    placeholderTextColor={isDark ? "#52525b" : "#a1a1aa"}
+                    secureTextEntry
+                    value={formData.newPassword}
+                    onChangeText={(val) => handleInputChange('newPassword', val)}
+                  />
+                  {errors.newPassword ? <Text style={styles.errorText}>{errors.newPassword}</Text> : null}
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Confirm New Password</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: isDark ? "#000" : "#fff" }]}
+                    placeholder="••••••"
+                    placeholderTextColor={isDark ? "#52525b" : "#a1a1aa"}
+                    secureTextEntry
+                    value={formData.confirmPassword}
+                    onChangeText={(val) => handleInputChange('confirmPassword', val)}
+                  />
+                  {errors.confirmPassword ? <Text style={styles.errorText}>{errors.confirmPassword}</Text> : null}
+                </View>
+              </View>
+
+              {/* Actions */}
+              <View style={styles.actions}>
+                <TouchableOpacity
+                  onPress={handleSaveProfile}
+                  disabled={isSaving}
+                  style={[styles.btn, styles.primaryBtn, isSaving && styles.btnDisabled]}
+                >
+                  {isSaving ? (
+                     <ActivityIndicator color={isDark ? "#000" : "#fff"} />
+                  ) : (
+                     <Text style={[styles.btnText, styles.primaryBtnText]}>Save Changes</Text>
+                  )}
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  onPress={handleLogout}
+                  style={[styles.btn, styles.outlineBtn]}
+                >
+                  <Text style={[styles.btnText, styles.outlineBtnText]}>Sign Out</Text>
+                </TouchableOpacity>
+              </View>
+
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingBottom: 40, backgroundColor: "#fff" },
-  card: { backgroundColor: "#fff", borderRadius: 14, padding: 16, shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 10, elevation: 4 },
-  headerTitle: { fontSize: 22, fontWeight: "700", textAlign: "center" },
-  headerSubtitle: { textAlign: "center", color: "#6b7280", marginBottom: 12 },
-  successBox: { backgroundColor: "#ecfdf5", padding: 10, borderRadius: 8, marginBottom: 10 },
-  successText: { color: "#065f46" },
-  errorBox: { backgroundColor: "#fee2e2", padding: 10, borderRadius: 8, marginBottom: 10 },
-  errorText: { color: "#991b1b" },
-  avatarWrap: { alignItems: "center", marginBottom: 12 },
-  avatarOuter: { width: 120, height: 120, borderRadius: 60, overflow: "hidden", backgroundColor: "#f3f4f6", marginBottom: 8 },
-  avatarImage: { width: "100%", height: "100%", resizeMode: "cover" },
-  avatarPlaceholder: { flex: 1, justifyContent: "center", alignItems: "center" },
-  avatarPlaceholderText: { color: "#9ca3af" },
-  avatarButton: { backgroundColor: "#f97316", paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },
-  avatarButtonText: { color: "#fff", fontWeight: "700" },
-  fieldError: { color: "#b91c1c", marginBottom: 8 },
-  passwordBox: { backgroundColor: "#f9fafb", padding: 12, borderRadius: 10, marginTop: 12 },
-  passwordTitle: { fontWeight: "600", marginBottom: 8 },
-  actionsRow: { flexDirection: "row", gap: 10, justifyContent: "space-between", marginTop: 14 },
-  loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center", paddingTop: 120 },
-  loadingText: { marginTop: 8, color: "#6b7280" },
-});
+// --- STYLES ---
+
+function getStyles(isDark: boolean) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: isDark ? "#09090b" : "#f8fafc",
+    },
+    center: {
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    loadingText: {
+      marginTop: 12,
+      color: isDark ? "#a1a1aa" : "#52525b",
+    },
+    topRight: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 20 : 40,
+      right: 20,
+      zIndex: 10,
+    },
+    topLeft: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 20 : 40,
+      left: 20,
+      zIndex: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 8,
+    },
+    backText: {
+      marginLeft: 6,
+      fontSize: 14,
+      fontWeight: "600",
+      color: isDark ? "#a1a1aa" : "#52525b",
+    },
+    scrollContent: {
+      padding: 20,
+      paddingTop: 80, 
+    },
+    card: {
+      backgroundColor: isDark ? "#18181b" : "#ffffff",
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: isDark ? "#27272a" : "#e4e4e7",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 12,
+      elevation: 4,
+      overflow: 'hidden',
+    },
+    cardHeader: {
+      padding: 24,
+      borderBottomWidth: 1,
+      borderBottomColor: isDark ? "#27272a" : "#f4f4f5",
+      alignItems: 'center',
+    },
+    title: {
+      fontSize: 24,
+      fontWeight: "bold",
+      color: isDark ? "#f4f4f5" : "#18181b",
+      marginBottom: 4,
+    },
+    subtitle: {
+      fontSize: 14,
+      color: isDark ? "#a1a1aa" : "#52525b",
+    },
+    cardBody: {
+      padding: 24,
+    },
+    successBox: {
+      backgroundColor: isDark ? "rgba(22, 163, 74, 0.2)" : "#f0fdf4",
+      padding: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: isDark ? "#14532d" : "#bbf7d0",
+      marginBottom: 24,
+    },
+    successText: {
+      color: isDark ? "#86efac" : "#15803d",
+      textAlign: 'center',
+      fontWeight: "600",
+    },
+    avatarSection: {
+      alignItems: 'center',
+      marginBottom: 24,
+    },
+    avatarWrapper: {
+      width: 120,
+      height: 120,
+      borderRadius: 60,
+      padding: 4,
+      backgroundColor: isDark ? "#000" : "#f4f4f5",
+      borderWidth: 1,
+      borderColor: isDark ? "#3f3f46" : "#e4e4e7",
+      position: 'relative',
+    },
+    avatarImage: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 60,
+    },
+    avatarPlaceholder: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 60,
+      backgroundColor: isDark ? "#27272a" : "#e4e4e7",
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    uploadBtn: {
+      position: 'absolute',
+      bottom: 0,
+      right: 0,
+      backgroundColor: isDark ? "#f4f4f5" : "#18181b",
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      justifyContent: 'center',
+      alignItems: 'center',
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.2,
+      shadowRadius: 4,
+      elevation: 4,
+    },
+    avatarHint: {
+      marginTop: 12,
+      fontSize: 12,
+      color: isDark ? "#71717a" : "#a1a1aa",
+    },
+    divider: {
+      height: 1,
+      backgroundColor: isDark ? "#27272a" : "#f4f4f5",
+      marginBottom: 24,
+    },
+    formGroup: {
+      marginBottom: 16,
+    },
+    label: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: isDark ? "#e4e4e7" : "#3f3f46",
+      marginBottom: 8,
+    },
+    input: {
+      backgroundColor: isDark ? "#000" : "#fff",
+      borderWidth: 1,
+      borderColor: isDark ? "#3f3f46" : "#e4e4e7",
+      borderRadius: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      fontSize: 16,
+      color: isDark ? "#f4f4f5" : "#18181b",
+    },
+    disabledInput: {
+      backgroundColor: isDark ? "rgba(39, 39, 42, 0.5)" : "#f8fafc",
+      color: isDark ? "#71717a" : "#94a3b8",
+    },
+    errorText: {
+      marginTop: 4,
+      fontSize: 12,
+      color: isDark ? "#fca5a5" : "#dc2626",
+    },
+    passwordSection: {
+      marginTop: 16,
+      padding: 16,
+      borderRadius: 12,
+      backgroundColor: isDark ? "rgba(39, 39, 42, 0.3)" : "#f8fafc",
+      borderWidth: 1,
+      borderColor: isDark ? "#27272a" : "#e4e4e7",
+      marginBottom: 24,
+    },
+    sectionTitle: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: isDark ? "#f4f4f5" : "#18181b",
+      marginBottom: 16,
+    },
+    actions: {
+      gap: 12,
+    },
+    btn: {
+      paddingVertical: 16,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    // ✅ FIX: Added the missing btnText style here
+    btnText: {
+      fontSize: 16,
+      fontWeight: "600",
+      textAlign: "center",
+    },
+    primaryBtn: {
+      backgroundColor: isDark ? "#f4f4f5" : "#18181b",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    primaryBtnText: {
+      color: isDark ? "#18181b" : "#ffffff",
+      fontWeight: "bold",
+    },
+    outlineBtn: {
+      borderWidth: 1,
+      borderColor: isDark ? "#3f3f46" : "#e4e4e7",
+      backgroundColor: "transparent",
+    },
+    outlineBtnText: {
+      color: isDark ? "#d4d4d8" : "#3f3f46",
+    },
+    btnDisabled: {
+      opacity: 0.7,
+    }
+  });
+}
