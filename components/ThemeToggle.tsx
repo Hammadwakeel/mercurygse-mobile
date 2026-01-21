@@ -1,175 +1,96 @@
-import { Monitor, Moon, Sun } from 'lucide-react-native';
-import React, { useState } from 'react';
+import { Moon, Sun } from "lucide-react-native";
+import React, { useEffect, useState } from "react";
 import {
-  Modal,
-  Pressable,
   StyleSheet,
-  Text,
   TouchableOpacity,
   useColorScheme,
-  useWindowDimensions,
   View
-} from 'react-native';
+} from "react-native";
 
 interface ThemeToggleProps {
-  theme: string;
-  // Changed from (theme: string) => void to (theme: any) => void
-  // This allows passing a stricter function like (t: "light" | "dark") => void without TS errors.
-  setTheme: (theme: any) => void; 
+  theme?: "light" | "dark";
+  // We accept toggleTheme to match your requested code, 
+  // or setTheme to match the previous Sidebar component.
+  toggleTheme?: () => void;
+  setTheme?: (theme: "light" | "dark") => void;
 }
 
-export default function ThemeToggle({ theme, setTheme }: ThemeToggleProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const systemScheme = useColorScheme(); // 'light' or 'dark'
-  const { width } = useWindowDimensions();
-  
-  // Logic: Only show text label on "Desktop" (Tablet+) widths
-  const showLabel = width >= 768; 
+export default function ThemeToggle({ theme: propTheme, toggleTheme, setTheme }: ThemeToggleProps) {
+  const systemScheme = useColorScheme();
+  const [mounted, setMounted] = useState(false);
 
-  // Determine active colors based on current effective theme
-  const isDarkMode = 
-    theme === 'dark' || (theme === 'system' && systemScheme === 'dark');
+  // Determine effective theme
+  const theme = propTheme || systemScheme || "light";
+  const isDark = theme === "dark";
 
-  const iconColor = isDarkMode ? '#e4e4e7' : '#18181b'; // zinc-200 / zinc-900
+  // Handle mounting state (hydration equivalent)
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
-  const options = [
-    { value: 'light', label: 'Light', Icon: Sun },
-    { value: 'dark', label: 'Dark', Icon: Moon },
-    { value: 'system', label: 'System', Icon: Monitor },
-  ];
+  // Helper to handle the toggle action regardless of which prop is passed
+  const handleToggle = () => {
+    if (toggleTheme) {
+      toggleTheme();
+    } else if (setTheme) {
+      setTheme(isDark ? "light" : "dark");
+    }
+  };
 
-  const current = options.find((o) => o.value === theme) || options[0];
-  const CurrentIcon = current.Icon;
+  if (!mounted) {
+    return <View style={styles.placeholder} />;
+  }
 
   return (
-    <View style={styles.container}>
-      
-      {/* --- Trigger Button --- */}
-      <TouchableOpacity
-        onPress={() => setIsOpen(true)}
-        style={[
-          styles.triggerBtn,
-          isDarkMode ? styles.btnDark : styles.btnLight
-        ]}
-      >
-        <CurrentIcon size={18} color={iconColor} />
-        {showLabel && (
-          <Text style={[styles.btnText, isDarkMode ? styles.textDark : styles.textLight]}>
-            {current.label}
-          </Text>
-        )}
-      </TouchableOpacity>
-
-      {/* --- Dropdown Modal --- */}
-      <Modal
-        visible={isOpen}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setIsOpen(false)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setIsOpen(false)}>
-          
-          <View style={[
-            styles.dropdown,
-            isDarkMode ? styles.dropdownDark : styles.dropdownLight
-          ]}>
-            {options.map((opt) => {
-              const Icon = opt.Icon;
-              const isActive = opt.value === theme;
-              
-              return (
-                <TouchableOpacity
-                  key={opt.value}
-                  onPress={() => {
-                    setTheme(opt.value);
-                    setIsOpen(false);
-                  }}
-                  style={[
-                    styles.optionBtn,
-                    isActive && (isDarkMode ? styles.activeDark : styles.activeLight)
-                  ]}
-                >
-                  <Icon size={16} color={iconColor} style={styles.optionIcon} />
-                  <Text style={[
-                    styles.optionText, 
-                    isDarkMode ? styles.textDark : styles.textLight
-                  ]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </Pressable>
-      </Modal>
-    </View>
+    <TouchableOpacity
+      onPress={handleToggle}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+      style={[
+        styles.container,
+        isDark ? styles.containerDark : styles.containerLight
+      ]}
+    >
+      {/* Logic Match: 
+        If Light Mode -> Show Moon (to switch to Dark)
+        If Dark Mode  -> Show Sun (to switch to Light)
+      */}
+      {!isDark ? (
+        <Moon size={20} color="#1f2937" fill="#1f2937" /> // text-gray-800
+      ) : (
+        <Sun size={20} color="#facc15" fill="#facc15" />  // text-yellow-400
+      )}
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
+  placeholder: {
+    width: 40,
+    height: 40,
+  },
   container: {
-    zIndex: 50,
-  },
-  triggerBtn: {
-    flexDirection: 'row',
+    width: 44, // roughly w-10 + padding
+    height: 44,
+    padding: 10,
+    borderRadius: 8, // rounded-lg
+    borderWidth: 2, // border-2
     alignItems: 'center',
-    gap: 8,
-    padding: 8,
-    borderRadius: 8,
-  },
-  btnText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  
-  // Modal Overlay Styles
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-start',
-    alignItems: 'flex-end', 
-    paddingTop: 60, 
-    paddingRight: 16,
-  },
-  dropdown: {
-    width: 128, 
-    borderRadius: 12, 
-    borderWidth: 1,
-    paddingVertical: 4, 
-    shadowColor: '#000',
+    justifyContent: 'center',
+    // Shadow / Elevation (shadow-lg)
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 5,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  optionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12, 
-    paddingVertical: 10,  
+  containerLight: {
+    backgroundColor: "rgba(255, 255, 255, 0.9)", // bg-white/80
+    borderColor: "#d1d5db", // border-gray-300
   },
-  optionIcon: {
-    marginRight: 8,
+  containerDark: {
+    backgroundColor: "rgba(30, 41, 59, 0.9)", // bg-slate-800/80
+    borderColor: "#475569", // border-slate-600
   },
-  optionText: {
-    fontSize: 14,
-  },
-
-  // Themes
-  btnLight: { backgroundColor: 'transparent' }, 
-  btnDark: { backgroundColor: 'transparent' },
-
-  dropdownLight: {
-    backgroundColor: '#ffffff',
-    borderColor: '#e4e4e7', 
-  },
-  dropdownDark: {
-    backgroundColor: '#18181b', 
-    borderColor: '#27272a', 
-  },
-
-  textLight: { color: '#09090b' },
-  textDark: { color: '#e4e4e7' },
-
-  activeLight: { backgroundColor: '#f4f4f5' }, 
-  activeDark: { backgroundColor: '#27272a' }, 
 });

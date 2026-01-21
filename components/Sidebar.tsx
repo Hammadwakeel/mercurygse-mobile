@@ -1,325 +1,521 @@
-// components/Sidebar.tsx
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { X } from "lucide-react-native";
-import React, { useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useRouter } from "expo-router"; // Use Expo Router for navigation
 import {
-    Image,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Clock,
+  Database,
+  LogIn,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Search as SearchIcon
+} from "lucide-react-native";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Image,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useColorScheme,
+  View
 } from "react-native";
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+// Components
 import ConversationRow from "./ConversationRow";
 import SearchModal from "./SearchModal";
-import SidebarSection from "./SidebarSection";
-import ThemeToggle from "./ThemeToggle";
+import SidebarSection from "./SidebarSection"; // You need to convert this too, or use a simple View
+import ThemeToggle from "./ThemeToggle"; // You need to convert this too
 
-type Conversation = {
-  id: string;
-  title: string;
-  preview?: string;
-  updatedAt: string | number;
-  pinned?: boolean;
-  messages?: any[];
-  messageCount?: number;
-  folder?: string | null;
-};
+// API
+import { api, ChatSession, User } from "../lib/api";
 
-type Props = {
-  conversations?: Conversation[];
-  pinned?: Conversation[];
-  recent?: Conversation[];
-  selectedId?: string | null;
-  onSelect?: (id: string) => void;
-  togglePin?: (id: string) => void;
+interface SidebarProps {
+  open: boolean;
+  onClose: () => void;
+  theme: "light" | "dark";
+  setTheme: (theme: "light" | "dark") => void;
+  collapsed: { recent: boolean; pinned?: boolean };
+  setCollapsed: React.Dispatch<React.SetStateAction<any>>;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  sidebarCollapsed?: boolean;
+  setSidebarCollapsed?: (collapsed: boolean) => void;
+  conversations?: ChatSession[];
+  userData: User | null;
+  onDeleteChat: (id: string) => void;
   createNewChat?: () => void;
-  userData?: { name?: string; role?: string } | null;
-  userAvatar?: string | null;
-  theme?: "light" | "dark";
-  setTheme?: (t: "light" | "dark") => void;
-  onClose?: () => void;
-};
+}
+
+// Simple in-memory cache variable for the session
+let cachedConversations: ChatSession[] | null = null;
+let cachedUser: User | null = null;
 
 export default function Sidebar({
-  conversations = [],
-  pinned = [],
-  recent = [],
-  selectedId = null,
-  onSelect = () => {},
-  togglePin = () => {},
-  createNewChat = () => {},
-  userData = null,
-  userAvatar = null,
-  theme = "light",
-  setTheme,
+  open,
   onClose,
-}: Props) {
+  theme,
+  setTheme,
+  collapsed,
+  setCollapsed,
+  selectedId,
+  onSelect,
+  sidebarCollapsed = false,
+  setSidebarCollapsed = () => {},
+  conversations: propConversations = [],
+  userData: propUserData = null,
+  onDeleteChat,
+  createNewChat
+}: SidebarProps) {
   const router = useRouter();
-  const isDarkMode = theme === 'dark';
-  const insets = useSafeAreaInsets();
+  const systemScheme = useColorScheme();
+  const currentTheme = theme || systemScheme || "light";
+  const isDark = currentTheme === "dark";
 
-  const colors = {
-    bg: isDarkMode ? "#09090b" : "#ffffff",
-    border: isDarkMode ? "#27272a" : "#e6e6e6",
-    text: isDarkMode ? "#e4e4e7" : "#0f172a",
-    textMuted: isDarkMode ? "#a1a1aa" : "#6b7280",
-    icon: isDarkMode ? "#e4e4e7" : "#111827",
-    hoverBg: isDarkMode ? "#27272a" : "#f4f4f5",
-    inputBg: isDarkMode ? "#18181b" : "#ffffff",
+  const [mounted, setMounted] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
+
+  // Internal State
+  const [internalConversations, setInternalConversations] = useState<ChatSession[]>(
+    propConversations.length > 0 ? propConversations : (cachedConversations || [])
+  );
+  const [internalUser, setInternalUser] = useState<User | null>(cachedUser);
+  const [loading, setLoading] = useState(!cachedConversations);
+
+  // Source of Truth
+  const conversations = internalConversations;
+  const userData = propUserData || internalUser;
+  const hasFetched = useRef(!!cachedConversations);
+
+  // Sync Props
+  useEffect(() => {
+    if (propConversations.length > 0) {
+      setInternalConversations(propConversations);
+    }
+  }, [propConversations]);
+
+  // Init Data
+  useEffect(() => {
+    setMounted(true);
+
+    if (propConversations.length === 0) {
+      const fetchData = async () => {
+        if (hasFetched.current) {
+          setLoading(false);
+          return;
+        }
+        hasFetched.current = true;
+
+        // Load User from Storage
+        const localUser = await AsyncStorage.getItem("user");
+        if (localUser && !cachedUser) {
+          try {
+            const parsed = JSON.parse(localUser);
+            setInternalUser(parsed);
+            cachedUser = parsed;
+          } catch (e) {}
+        }
+
+        try {
+          setLoading(true);
+          const [chatsResult, profileResult] = await Promise.allSettled([
+            api.chat.list().catch(() => []),
+            api.user.getProfile().catch(() => null)
+          ]);
+
+          if (chatsResult.status === "fulfilled") {
+            const newChats = chatsResult.value || [];
+            setInternalConversations(newChats);
+            cachedConversations = newChats;
+          }
+
+          if (profileResult.status === "fulfilled" && profileResult.value) {
+            setInternalUser(profileResult.value);
+            cachedUser = profileResult.value;
+            await AsyncStorage.setItem("user", JSON.stringify(profileResult.value));
+          } else if (profileResult.status === "fulfilled" && !profileResult.value) {
+            setInternalUser(null);
+            cachedUser = null;
+          }
+        } catch (error) {
+          console.error("Failed to fetch sidebar data", error);
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchData();
+    } else {
+      setLoading(false);
+    }
+  }, [propConversations.length]);
+
+  const refreshChats = async () => {
+    try {
+      const chats = await api.chat.list();
+      setInternalConversations(chats);
+      cachedConversations = chats;
+    } catch (e) {
+      console.error("Failed to refresh chats", e);
+    }
   };
 
-  const [showSearchModal, setShowSearchModal] = useState(false);
-  const [query, setQuery] = useState("");
+  const handleCreateChat = () => {
+    if (createNewChat) createNewChat();
+    else onSelect(null);
+    onClose(); // Always close sidebar on mobile when creating new chat
+  };
+
+  const handleDeleteChat = async (id: string) => {
+    if (onDeleteChat) {
+      onDeleteChat(id);
+    } else {
+      try {
+        const updated = internalConversations.filter((c) => c.id !== id);
+        setInternalConversations(updated);
+        cachedConversations = updated;
+
+        if (selectedId === id) onSelect(null);
+        await api.chat.delete(id);
+        await refreshChats();
+      } catch (e) {
+        console.error("Delete failed", e);
+        refreshChats();
+      }
+    }
+  };
+
+  const handleRenameChat = async (id: string, newTitle: string) => {
+    try {
+      const updated = internalConversations.map((c) =>
+        c.id === id ? { ...c, title: newTitle } : c
+      );
+      setInternalConversations(updated);
+      cachedConversations = updated;
+      await api.chat.rename(id, newTitle);
+      await refreshChats();
+    } catch (e) {
+      console.error("Rename failed", e);
+      refreshChats();
+    }
+  };
 
   const getInitials = (name?: string) => {
     if (!name) return "?";
-    return name.split(" ").map((n) => n[0] ?? "").join("").toUpperCase().slice(0, 2);
+    return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
   };
 
-  const handleProfilePress = () => {
-    router.push("/profile");
-  };
+  // Styles
+  const styles = getStyles(isDark);
+  const iconColor = isDark ? "#a1a1aa" : "#71717a";
 
-  const pinnedList = pinned.length ? pinned : conversations.filter((c) => c.pinned);
-  const recentList = recent.length ? recent : conversations.slice(0, 12);
+  const renderUserSection = () => {
+    if (!mounted) return <View style={styles.loadingUser} />;
 
-  const containerStyle = [
-    styles.container, 
-    { 
-      backgroundColor: colors.bg, 
-      // CHANGED: Removed "+ 10" to reduce top space
-      paddingTop: 10, 
-      paddingBottom: insets.bottom 
+    if (userData) {
+      return (
+        <TouchableOpacity
+          onPress={() => router.push("/profile")}
+          style={styles.userRow}
+        >
+          <View style={styles.avatarContainer}>
+            {userData.avatar_url ? (
+              <Image
+                source={{ uri: userData.avatar_url }}
+                style={styles.avatarImage}
+              />
+            ) : (
+              <Text style={styles.avatarText}>
+                {getInitials(userData.full_name || userData.email)}
+              </Text>
+            )}
+          </View>
+          <View style={styles.userInfo}>
+            <Text style={styles.userName} numberOfLines={1}>
+              {userData.full_name || "User"}
+            </Text>
+            <Text style={styles.userEmail} numberOfLines={1}>
+              {userData.email}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      );
     }
-  ];
+
+    return (
+      <TouchableOpacity
+        onPress={() => router.push("/login")}
+        style={styles.loginBtn}
+      >
+        <LogIn size={16} color="#fff" style={{ marginRight: 8 }} />
+        <Text style={styles.loginText}>Log In</Text>
+      </TouchableOpacity>
+    );
+  };
+
+  // --- Render ---
+  
+  // NOTE: On mobile, "sidebarCollapsed" (mini sidebar) is rarely used. 
+  // We treat the sidebar as a Drawer.
+
+  if (sidebarCollapsed) {
+    // Mini Sidebar (Tablet use case mainly)
+    return (
+        <View style={styles.collapsedContainer}>
+             <TouchableOpacity onPress={() => setSidebarCollapsed(false)} style={styles.iconBtn}>
+                 <PanelLeftOpen size={20} color={iconColor} />
+             </TouchableOpacity>
+             <View style={{ gap: 16, marginTop: 16, alignItems: 'center' }}>
+                <TouchableOpacity onPress={handleCreateChat} style={styles.iconBtn}>
+                    <Plus size={20} color={iconColor} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowSearchModal(true)} style={styles.iconBtn}>
+                    <SearchIcon size={20} color={iconColor} />
+                </TouchableOpacity>
+                {userData?.role === 'admin' && (
+                    <TouchableOpacity onPress={() => router.push('/admin')} style={styles.iconBtn}>
+                        <Database size={20} color={iconColor} />
+                    </TouchableOpacity>
+                )}
+             </View>
+        </View>
+    )
+  }
 
   return (
-    <View style={containerStyle}>
-      {/* Header: Brand + Close Button */}
-      <View style={[styles.header, { borderColor: colors.border }]}>
-        <View style={styles.brandRow}>
-          <Image source={require("../assets/images/logo.jpeg")} style={styles.logo} />
-          <Text style={[styles.brandText, { color: colors.text }]}>AI Mechanic</Text>
-        </View>
-
-        <TouchableOpacity onPress={onClose} style={styles.iconBtn}>
-          <X size={24} color={colors.icon} />
-        </TouchableOpacity>
-      </View>
-
-      <View style={[styles.searchWrap, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
-        <Ionicons name="search" size={16} color={colors.textMuted} style={{ marginLeft: 8 }} />
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder="Search…"
-          placeholderTextColor={colors.textMuted}
-          style={[styles.searchInput, { color: colors.text }]}
-          onFocus={() => setShowSearchModal(true)}
-        />
-      </View>
-
-      <View style={styles.newChatWrap}>
-        <TouchableOpacity onPress={createNewChat} style={styles.newChatBtn}>
-          <Ionicons name="add" size={16} color="#fff" />
-          <Text style={styles.newChatText}>Start New Chat</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView style={styles.nav} contentContainerStyle={{ paddingBottom: 20 }}>
-        <SidebarSection
-          title="PINNED CHATS"
-          icon={<Ionicons name="star" size={16} color={colors.textMuted} />}
-          collapsed={false}
-          onToggle={() => {}}
-        >
-          {pinnedList.length === 0 ? (
-            <View style={[styles.emptyBox, { borderColor: colors.border }]}>
-              <Text style={[styles.emptyText, { color: colors.textMuted }]}>Pin important threads.</Text>
-            </View>
-          ) : (
-            pinnedList.map((c) => (
-              <ConversationRow
-                key={c.id}
-                data={c}
-                active={c.id === selectedId}
-                onSelect={() => onSelect(c.id)}
-                onTogglePin={() => togglePin(c.id)}
-                showMeta={false}
-              />
-            ))
-          )}
-        </SidebarSection>
-
-        <SidebarSection
-          title="RECENT"
-          icon={<Ionicons name="time" size={16} color={colors.textMuted} />}
-          collapsed={false}
-          onToggle={() => {}}
-        >
-          {recentList.length === 0 ? (
-            <View style={[styles.emptyBox, { borderColor: colors.border }]}>
-              <Text style={[styles.emptyText, { color: colors.textMuted }]}>No conversations yet.</Text>
-            </View>
-          ) : (
-            recentList.map((c) => (
-              <ConversationRow
-                key={c.id}
-                data={c}
-                active={c.id === selectedId}
-                onSelect={() => onSelect(c.id)}
-                onTogglePin={() => togglePin(c.id)}
-                showMeta
-              />
-            ))
-          )}
-        </SidebarSection>
-      </ScrollView>
-
-      <View style={[styles.bottom, { borderColor: colors.border }]}>
-        <View style={styles.bottomRow}>
-          <TouchableOpacity style={styles.iconBtn}>
-            <Ionicons name="settings-outline" size={18} color={colors.icon} />
+    <>
+      <View style={styles.container}>
+        {/* Header Section */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => setShowSearchModal(true)}
+            style={styles.iconBtn}
+          >
+            <SearchIcon size={20} color={iconColor} />
           </TouchableOpacity>
 
-          <View style={{ marginLeft: "auto" }}>
-            <ThemeToggle theme={theme} setTheme={setTheme!} />
+          <View style={styles.headerRight}>
+             {/* Collapsed button usually hidden on phones, shown on tablets */}
+            <TouchableOpacity
+              onPress={() => setSidebarCollapsed(true)}
+              style={[styles.iconBtn, { display: Platform.OS === 'web' ? 'flex' : 'none' }]} 
+            >
+              <PanelLeftClose size={20} color={iconColor} />
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={onClose} style={styles.iconBtn}>
+              <PanelLeftClose size={20} color={iconColor} />
+            </TouchableOpacity>
           </View>
         </View>
 
-        {userData ? (
-          <TouchableOpacity style={[styles.profileBtn, { backgroundColor: isDarkMode ? colors.hoverBg : '#f8fafc' }]} onPress={handleProfilePress}>
-            <View style={styles.avatarWrap}>
-              {userAvatar ? (
-                <Image source={{ uri: userAvatar }} style={styles.avatar} />
-              ) : (
-                <View style={styles.initials}>
-                  <Text style={styles.initialsText}>{getInitials(userData.name)}</Text>
-                </View>
-              )}
-            </View>
-            <View style={styles.profileTextWrap}>
-              <Text numberOfLines={1} style={[styles.profileName, { color: colors.text }]}>
-                {userData.name ?? "User"}
-              </Text>
-              <Text numberOfLines={1} style={[styles.profileRole, { color: colors.textMuted }]}>
-                {userData.role === "user" ? "User" : userData.role ?? ""}
-              </Text>
-            </View>
+        <View style={styles.divider} />
+
+        <View style={{ padding: 12 }}>
+          <TouchableOpacity
+            onPress={handleCreateChat}
+            style={styles.newChatBtn}
+          >
+            <Plus size={16} color={isDark ? "#000" : "#fff"} />
+            <Text style={styles.newChatText}>Start New Chat</Text>
           </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={styles.loginBtn} onPress={() => router.push("/login")}>
-            <Text style={styles.loginBtnText}>Login</Text>
-          </TouchableOpacity>
-        )}
+        </View>
+
+        {/* Chat List */}
+        <ScrollView style={styles.scrollArea}>
+          <SidebarSection
+            icon={<Clock size={16} color={iconColor} />}
+            title={"RECENT CHATS"}
+            collapsed={collapsed.recent}
+            onToggle={() => setCollapsed((s: any) => ({ ...s, recent: !s.recent }))}
+            theme={theme}
+          >
+            {!mounted || (loading && !cachedConversations && propConversations.length === 0) ? (
+              <ActivityIndicator size="small" color={iconColor} style={{ margin: 20 }} />
+            ) : conversations.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyText}>No conversations yet.</Text>
+              </View>
+            ) : (
+              conversations.map((c) => (
+                <ConversationRow
+                  key={c.id}
+                  data={c}
+                  active={c.id === selectedId}
+                  onSelect={() => {
+                    onSelect(c.id);
+                    onClose();
+                  }}
+                  onRename={(newTitle: string) => handleRenameChat(c.id, newTitle)}
+                  onDelete={() => handleDeleteChat(c.id)}
+                  showMeta={true}
+                  theme={theme}
+                />
+              ))
+            )}
+          </SidebarSection>
+        </ScrollView>
+
+        {/* Footer */}
+        <View style={styles.footer}>
+          <View style={styles.footerControls}>
+            {userData?.role === "admin" && (
+              <TouchableOpacity
+                onPress={() => router.push("/admin")}
+                style={styles.iconBtn}
+              >
+                <Database size={20} color={iconColor} />
+              </TouchableOpacity>
+            )}
+            <View style={userData?.role !== "admin" ? { marginLeft: 'auto' } : {}}>
+                 <ThemeToggle theme={theme} setTheme={setTheme} />
+            </View>
+          </View>
+
+          {renderUserSection()}
+        </View>
       </View>
 
       <SearchModal
-        isVisible={showSearchModal}
+        isOpen={showSearchModal}
         onClose={() => setShowSearchModal(false)}
         conversations={conversations}
-        onSelect={(id) => { onSelect(id); setShowSearchModal(false); }}
-        createNewChat={() => { createNewChat(); setShowSearchModal(false); }}
-        selectedId={selectedId ?? undefined}
+        onSelect={onSelect}
+        createNewChat={handleCreateChat}
+        theme={theme}
       />
-    </View>
+    </>
   );
 }
 
-const styles = StyleSheet.create({
+// --- STYLES ---
+
+const getStyles = (isDark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
-    width: '100%',
+    backgroundColor: isDark ? "#09090b" : "#ffffff",
+    borderRightWidth: 1,
+    borderRightColor: isDark ? "#27272a" : "#e4e4e7",
+  },
+  collapsedContainer: {
+    width: 64,
+    height: '100%',
+    alignItems: 'center',
+    paddingTop: 12,
+    backgroundColor: isDark ? "#09090b" : "#ffffff",
+    borderRightWidth: 1,
+    borderRightColor: isDark ? "#27272a" : "#e4e4e7",
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 12,
+  },
+  headerRight: {
+    flexDirection: "row",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: isDark ? "#27272a" : "#e4e4e7",
   },
   iconBtn: {
     padding: 8,
     borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
   },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-  },
-  brandRow: { flexDirection: "row", alignItems: "center", gap: 8 as any },
-  logo: { width: 36, height: 36, borderRadius: 8, resizeMode: "cover" },
-  brandText: { marginLeft: 8, fontWeight: "700", fontSize: 18 },
-  
-  searchWrap: {
-    marginTop: 10,
-    marginHorizontal: 12,
-    height: 40,
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  searchInput: { flex: 1, marginLeft: 6, marginRight: 12, fontSize: 14 },
-  
-  newChatWrap: { paddingHorizontal: 12, paddingTop: 12 },
   newChatBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8 as any,
-    backgroundColor: "#111827",
-    paddingVertical: 10,
+    backgroundColor: isDark ? "#ffffff" : "#18181b",
+    paddingVertical: 12,
     borderRadius: 999,
+    gap: 8,
   },
-  newChatText: { color: "#fff", fontWeight: "600", marginLeft: 8 },
-  
-  nav: { marginTop: 12, paddingHorizontal: 8 },
-  
+  newChatText: {
+    color: isDark ? "#000000" : "#ffffff",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  scrollArea: {
+    flex: 1,
+    paddingHorizontal: 8,
+  },
   emptyBox: {
+    padding: 12,
     borderWidth: 1,
-    borderStyle: "dashed",
-    padding: 10,
-    borderRadius: 10,
-    margin: 8,
+    borderStyle: 'dashed',
+    borderColor: isDark ? "#27272a" : "#e4e4e7",
+    borderRadius: 8,
+    alignItems: 'center',
   },
-  emptyText: { textAlign: "center", fontSize: 12 },
-  
-  bottom: {
+  emptyText: {
+    color: isDark ? "#71717a" : "#a1a1aa",
+    fontSize: 12,
+  },
+  footer: {
     borderTopWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderTopColor: isDark ? "#27272a" : "#e4e4e7",
+    padding: 12,
   },
-  bottomRow: { flexDirection: "row", alignItems: "center" },
-  
-  profileBtn: {
-    marginTop: 10,
+  footerControls: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  loadingUser: {
+    height: 48,
+    backgroundColor: isDark ? "#27272a" : "#f4f4f5",
+    borderRadius: 12,
+  },
+  userRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10 as any,
     padding: 8,
+    backgroundColor: isDark ? "#18181b" : "#f4f4f5",
     borderRadius: 12,
   },
-  avatarWrap: {
-    width: 44, height: 44, borderRadius: 22, overflow: "hidden",
-    backgroundColor: "#111827", alignItems: "center", justifyContent: "center"
-  },
-  avatar: { width: "100%", height: "100%", resizeMode: "cover" },
-  initials: { width: "100%", height: "100%", alignItems: "center", justifyContent: "center" },
-  initialsText: { color: "#fff", fontWeight: "700" },
-  profileTextWrap: { flex: 1 },
-  profileName: { fontWeight: "700", fontSize: 14 },
-  profileRole: { fontSize: 12 },
-  
-  loginBtn: {
-    marginTop: 10,
-    backgroundColor: "#111827",
-    paddingVertical: 10,
-    borderRadius: 12,
+  avatarContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: isDark ? "#ffffff" : "#18181b",
+    justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
   },
-  loginBtnText: { color: "#fff", fontWeight: "700" },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
+  },
+  avatarText: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: isDark ? "#000" : "#fff",
+  },
+  userInfo: {
+    marginLeft: 8,
+    flex: 1,
+  },
+  userName: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: isDark ? "#fff" : "#000",
+  },
+  userEmail: {
+    fontSize: 12,
+    color: isDark ? "#a1a1aa" : "#71717a",
+  },
+  loginBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#2563eb",
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  loginText: {
+    color: "#ffffff",
+    fontWeight: "600",
+  },
 });
