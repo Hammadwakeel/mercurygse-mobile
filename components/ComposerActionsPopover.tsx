@@ -1,214 +1,238 @@
-// components/ComposerActionsPopover.tsx
-import { Feather, FontAwesome5, Ionicons, MaterialIcons } from "@expo/vector-icons";
-import React, { ReactNode, useState } from "react";
 import {
-    FlatList,
-    Modal,
-    Pressable,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  BookOpen,
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Globe,
+  MoreHorizontal,
+  Palette,
+  Paperclip,
+  Search,
+} from "lucide-react-native";
+import React, { useState } from "react";
+import {
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useColorScheme,
+  View,
 } from "react-native";
 
-type Action = {
-  id: string;
+// --- Types ---
+interface ActionItem {
+  icon: any; // Lucide Icon or Custom Component
   label: string;
-  icon?: any;
   badge?: string;
   action: () => void;
-};
+  isCustomIcon?: boolean;
+}
 
-// Add theme prop
-export default function ComposerActionsPopover({ 
-  children, 
-  theme = "light" 
-}: { 
-  children: ReactNode;
+interface ComposerActionsPopoverProps {
+  children: React.ReactNode;
   theme?: "light" | "dark";
-}) {
-  const [open, setOpen] = useState(false);
+}
+
+export default function ComposerActionsPopover({
+  children,
+  theme,
+}: ComposerActionsPopoverProps) {
+  const systemScheme = useColorScheme();
+  const currentTheme = theme || systemScheme || "light";
+  const isDark = currentTheme === "dark";
+
+  const [visible, setVisible] = useState(false);
   const [showMore, setShowMore] = useState(false);
-  const isDarkMode = theme === 'dark';
 
-  // Dynamic Colors
-  const colors = {
-    bg: isDarkMode ? "#18181b" : "#ffffff",
-    text: isDarkMode ? "#e4e4e7" : "#111827",
-    icon: isDarkMode ? "#9ca3af" : "#374151",
-    border: isDarkMode ? "#27272a" : "#e5e7eb",
-    badgeBg: isDarkMode ? "#1e3a8a" : "#dbeafe",
-    badgeText: isDarkMode ? "#93c5fd" : "#1e40af",
-    overlay: "rgba(0,0,0,0.5)",
-  };
+  // --- Custom Icons for Connectors ---
+  const GoogleIcon = () => (
+    <View style={[styles.customIconBase, { backgroundColor: "#4285F4" }]}>
+      <View style={styles.customIconDot} />
+    </View>
+  );
 
-  const mainActions: Action[] = [
+  const OneDriveIcon = () => (
+    <View style={[styles.customIconBase, { backgroundColor: "#0078D4" }]}>
+      <View style={styles.customIconDot} />
+    </View>
+  );
+
+  const SharepointIcon = () => (
+    <View style={[styles.customIconBase, { backgroundColor: "#037A76" }]}>
+      <View style={styles.customIconDot} />
+    </View>
+  );
+
+  // --- Data ---
+  const mainActions: ActionItem[] = [
     {
-      id: "files",
+      icon: Paperclip,
       label: "Add photos & files",
-      icon: MaterialIcons,
       action: () => console.log("Add photos & files"),
     },
     {
-      id: "agent",
+      icon: Bot,
       label: "Agent mode",
-      icon: FontAwesome5,
       badge: "NEW",
       action: () => console.log("Agent mode"),
     },
     {
-      id: "deep",
+      icon: Search,
       label: "Deep research",
-      icon: Feather,
       action: () => console.log("Deep research"),
     },
     {
-      id: "image",
+      icon: Palette,
       label: "Create image",
-      icon: Ionicons,
       action: () => console.log("Create image"),
     },
     {
-      id: "study",
+      icon: BookOpen,
       label: "Study and learn",
-      icon: MaterialIcons,
       action: () => console.log("Study and learn"),
     },
   ];
 
-  const moreActions: Action[] = [
+  const moreActions: ActionItem[] = [
     {
-      id: "web",
+      icon: Globe,
       label: "Web search",
-      icon: Feather,
       action: () => console.log("Web search"),
     },
     {
-      id: "canvas",
+      icon: Palette,
       label: "Canvas",
-      icon: MaterialIcons,
       action: () => console.log("Canvas"),
     },
     {
-      id: "gdrive",
+      icon: GoogleIcon,
       label: "Connect Google Drive",
-      icon: null, // Custom render in list
       action: () => console.log("Connect Google Drive"),
+      isCustomIcon: true,
+    },
+    {
+      icon: OneDriveIcon,
+      label: "Connect OneDrive",
+      action: () => console.log("Connect OneDrive"),
+      isCustomIcon: true,
+    },
+    {
+      icon: SharepointIcon,
+      label: "Connect Sharepoint",
+      action: () => console.log("Connect Sharepoint"),
+      isCustomIcon: true,
     },
   ];
 
-  const handleAction = (fn: () => void) => {
-    fn();
-    setOpen(false);
-    setShowMore(false);
+  const handleAction = (action: () => void) => {
+    action();
+    closeMenu();
   };
 
-  const renderIcon = (item: Action) => {
-     if (item.id === 'gdrive') {
-       return (
-        <View style={[styles.iconDot, { backgroundColor: "#06b6d4" }]}>
-          <View style={styles.iconDotInner} />
+  const closeMenu = () => {
+    setVisible(false);
+    // Small delay to reset state after animation closes
+    setTimeout(() => setShowMore(false), 300);
+  };
+
+  // --- Render Helpers ---
+  const styles = getStyles(isDark);
+  const iconColor = isDark ? "#e4e4e7" : "#18181b"; // Zinc 200 / Zinc 900
+
+  const renderActionRow = (item: ActionItem, index: number) => {
+    const Icon = item.icon;
+    return (
+      <TouchableOpacity
+        key={index}
+        style={styles.actionRow}
+        onPress={() => handleAction(item.action)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.iconContainer}>
+          {item.isCustomIcon ? (
+            <Icon />
+          ) : (
+            <Icon size={20} color={iconColor} strokeWidth={2} />
+          )}
         </View>
-       );
-     }
-     const IconComp = item.icon || MaterialIcons;
-     const name = item.icon ? (item.id === 'files' ? 'attach-file' : item.id === 'image' ? 'image' : 'circle') : 'insert-drive-file';
-     
-     // Lucide/Vector icons usually take a 'name' prop. 
-     // To keep it simple based on your previous code logic:
-     return <IconComp name={name} size={18} color={colors.icon} />;
+        <Text style={styles.actionLabel}>{item.label}</Text>
+        {item.badge && (
+          <View style={styles.badgeContainer}>
+            <Text style={styles.badgeText}>{item.badge}</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
   };
 
   return (
     <>
-      <Pressable onPress={() => setOpen(true)}>{children}</Pressable>
+      {/* Trigger: We wrap children in a Pressable to open modal */}
+      <Pressable onPress={() => setVisible(true)}>{children}</Pressable>
 
-      <Modal visible={open} animationType="fade" transparent onRequestClose={() => setOpen(false)}>
-        <Pressable style={[styles.modalOverlay, { backgroundColor: colors.overlay }]} onPress={() => setOpen(false)}>
-          {/* Stop propagation on card press */}
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeMenu}
+      >
+        <Pressable style={styles.overlay} onPress={closeMenu}>
+          {/* Menu Container */}
           <Pressable 
-            style={[styles.modalCard, { backgroundColor: colors.bg }]} 
-            onPress={(e) => e.stopPropagation()}
+            style={styles.menuContainer} 
+            onPress={(e) => e.stopPropagation()} // Prevent click-through closing
           >
-            {!showMore ? (
-              <>
-                <FlatList
-                  data={mainActions}
-                  keyExtractor={(i) => i.id}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={styles.actionRow}
-                      onPress={() => handleAction(item.action)}
-                    >
-                      {/* Simple Icon Logic */}
-                      {item.icon ? (
-                        <item.icon 
-                            name={item.id === 'files' ? 'attach-file' : item.id === 'agent' ? 'robot' : item.id === 'deep' ? 'search' : item.id === 'image' ? 'image' : 'school'} 
-                            size={18} 
-                            color={colors.icon} 
-                        />
-                      ) : (
-                        <MaterialIcons name="insert-drive-file" size={18} color={colors.icon} />
-                      )}
-                      
-                      <Text style={[styles.actionLabel, { color: colors.text }]}>{item.label}</Text>
-                      {item.badge ? (
-                        <View style={[styles.badge, { backgroundColor: colors.badgeBg }]}>
-                          <Text style={[styles.badgeText, { color: colors.badgeText }]}>{item.badge}</Text>
-                        </View>
-                      ) : null}
-                    </TouchableOpacity>
-                  )}
-                  ItemSeparatorComponent={() => <View style={{ height: 4 }} />}
-                />
+            <ScrollView 
+                bounces={false} 
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.scrollContent}
+            >
+              {/* Main Actions */}
+              {mainActions.map(renderActionRow)}
 
+              {/* The "More" Logic */}
+              {!showMore ? (
                 <TouchableOpacity
-                  style={[styles.actionRow, styles.moreBtn, { borderTopColor: colors.border }]}
+                  style={[styles.actionRow, styles.moreRow]}
                   onPress={() => setShowMore(true)}
+                  activeOpacity={0.7}
                 >
-                  <Feather name="more-horizontal" size={18} color={colors.icon} />
-                  <Text style={[styles.actionLabel, { color: colors.text }]}>More</Text>
-                  <Ionicons name="chevron-forward" size={18} color={colors.icon} style={{ marginLeft: "auto" }} />
+                  <View style={styles.iconContainer}>
+                    <MoreHorizontal size={20} color={iconColor} />
+                  </View>
+                  <Text style={styles.actionLabel}>More</Text>
+                  <ChevronRight size={16} color={isDark ? "#71717a" : "#a1a1aa"} />
                 </TouchableOpacity>
-              </>
-            ) : (
-              // Simplified "More" view for compactness
-              <View>
-                 <TouchableOpacity
-                  style={[styles.actionRow, { paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: colors.border, marginBottom: 5 }]}
-                  onPress={() => setShowMore(false)}
-                >
-                  <Ionicons name="chevron-back" size={18} color={colors.icon} />
-                  <Text style={[styles.actionLabel, { color: colors.text }]}>Back</Text>
-                </TouchableOpacity>
+              ) : (
+                <>
+                  {/* Divider */}
+                  <View style={styles.divider} />
+                  
+                  {/* Extra Actions Header or Continuation */}
+                  <View style={styles.moreHeader}>
+                    <Text style={styles.moreHeaderText}>Integrations & Tools</Text>
+                  </View>
 
-                <FlatList
-                    data={moreActions}
-                    keyExtractor={(i) => i.id}
-                    renderItem={({ item }) => (
-                      <TouchableOpacity
-                        style={styles.actionRow}
-                        onPress={() => handleAction(item.action)}
-                      >
-                         {item.id === 'web' && <Feather name="globe" size={18} color={colors.icon} />}
-                         {item.id === 'canvas' && <MaterialIcons name="brush" size={18} color={colors.icon} />}
-                         {item.id === 'gdrive' && (
-                            <View style={[styles.iconDot, { backgroundColor: "#06b6d4" }]}>
-                                <View style={styles.iconDotInner} />
-                            </View>
-                         )}
-                         {item.id === 'onedrive' && (
-                            <View style={[styles.iconDot, { backgroundColor: "#2563eb" }]}>
-                                <View style={styles.iconDotInner} />
-                            </View>
-                         )}
-
-                        <Text style={[styles.actionLabel, { color: colors.text }]}>{item.label}</Text>
-                      </TouchableOpacity>
-                    )}
-                  />
-              </View>
-            )}
+                  {/* More Actions List */}
+                  {moreActions.map(renderActionRow)}
+                  
+                  {/* Option to collapse */}
+                   <TouchableOpacity
+                      style={[styles.actionRow, styles.collapseRow]}
+                      onPress={() => setShowMore(false)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.iconContainer}>
+                        <ChevronDown size={20} color={iconColor} />
+                      </View>
+                      <Text style={styles.actionLabel}>Show Less</Text>
+                    </TouchableOpacity>
+                </>
+              )}
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
@@ -216,62 +240,92 @@ export default function ComposerActionsPopover({
   );
 }
 
-const styles = StyleSheet.create({
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 20,
-  },
-  modalCard: {
-    width: "85%", // Much smaller width
-    maxWidth: 320, // Strict max width for tablet/desktop
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    // strong shadow
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12, // slightly taller touch targets
-  },
-  actionLabel: {
-    marginLeft: 12,
-    fontSize: 15,
-    flex: 1,
-    fontWeight: "500",
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  moreBtn: {
-    borderTopWidth: 1,
-    marginTop: 4,
-    paddingTop: 12,
-  },
-  iconDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconDotInner: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#fff",
-  },
-});
+// --- STYLES ---
+
+const getStyles = (isDark: boolean) =>
+  StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.5)",
+      justifyContent: "flex-end", // Bottom sheet style
+      // For centered dialog style, change to 'center' and add padding
+    },
+    menuContainer: {
+      width: "100%",
+      backgroundColor: isDark ? "#18181b" : "#ffffff", // Zinc 900 / White
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      paddingBottom: Platform.OS === "ios" ? 40 : 20, // Safe area for bottom
+      paddingTop: 16,
+      maxHeight: "80%", // Don't take full screen
+    },
+    scrollContent: {
+      paddingHorizontal: 16,
+    },
+    actionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 14,
+      borderRadius: 12,
+    },
+    moreRow: {
+      marginTop: 4,
+      borderTopWidth: 1,
+      borderTopColor: isDark ? "#27272a" : "#f4f4f5",
+    },
+    collapseRow: {
+       marginTop: 8,
+       opacity: 0.7
+    },
+    iconContainer: {
+      width: 24,
+      alignItems: "center",
+      marginRight: 16,
+    },
+    actionLabel: {
+      flex: 1,
+      fontSize: 16,
+      color: isDark ? "#f4f4f5" : "#18181b",
+      fontWeight: "500",
+    },
+    badgeContainer: {
+      backgroundColor: isDark ? "#1e3a8a" : "#eff6ff", // Blue 900 / Blue 50
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 999,
+    },
+    badgeText: {
+      fontSize: 10,
+      fontWeight: "bold",
+      color: isDark ? "#93c5fd" : "#2563eb", // Blue 300 / Blue 600
+    },
+    divider: {
+      height: 1,
+      backgroundColor: isDark ? "#27272a" : "#f4f4f5",
+      marginVertical: 8,
+    },
+    moreHeader: {
+      paddingVertical: 8,
+    },
+    moreHeaderText: {
+      fontSize: 12,
+      color: isDark ? "#71717a" : "#a1a1aa",
+      fontWeight: "600",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    // Custom Icon Styles
+    customIconBase: {
+      width: 18,
+      height: 18,
+      borderRadius: 4,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    customIconDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: "#ffffff",
+    },
+  });
