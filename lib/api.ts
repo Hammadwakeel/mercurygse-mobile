@@ -2,14 +2,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // --- Configuration ---
-
-// ✅ FIX: Use the specific IP found in your Metro logs (10.49.43.164).
-// 'localhost' only works for iOS Simulators.
-// '10.0.2.2' only works for Android Emulators.
-// For Physical Devices, you MUST use your computer's LAN IP.
-const LAN_IP = "10.49.43.164"; 
-
-const API_BASE_URL = `http://${LAN_IP}:8000/api/v1`; 
+// You switched to the remote URL, which is fine, but it invalidates old local tokens.
+const API_BASE_URL = `https://maryamizat-r-s-rag.hf.space/api/v1`; 
 const INGESTION_BASE_URL = "https://hammad712-ingestion.hf.space";
 
 export { API_BASE_URL, INGESTION_BASE_URL };
@@ -28,7 +22,7 @@ export interface AuthResponse {
   access_token: string;
   token_type: string;
   user: User;
-  refresh_token?: string; // Optional because some backends might not send it
+  refresh_token?: string; 
 }
 
 export interface ChatSession {
@@ -47,7 +41,6 @@ export interface Message {
   is_summarized: boolean;
 }
 
-// React Native File Type
 export interface RNFile {
   uri: string;
   name: string;
@@ -85,6 +78,14 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const response = await fetch(url, config);
 
   if (!response.ok) {
+    // ✅ FIX: Detect Invalid/Expired Token (401)
+    if (response.status === 401) {
+      console.log("Token expired or invalid. Clearing session...");
+      await AsyncStorage.removeItem("accessToken");
+      await AsyncStorage.removeItem("refreshToken");
+      await AsyncStorage.removeItem("user");
+    }
+
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || "API Request Failed");
   }
@@ -104,7 +105,6 @@ export async function login(email: string, password: string): Promise<AuthRespon
     body: JSON.stringify({ email, password }),
   });
   
-  // ✅ FIX: Safely save tokens only if they exist
   if (data.access_token) {
     await AsyncStorage.setItem("accessToken", data.access_token);
   }
@@ -137,7 +137,6 @@ export interface BulkIngestionCallbacks {
   onComplete: (reportUrl: string | null) => void;
 }
 
-// React Native Implementation of Bulk Ingestion
 export const ingestBulkDocument = async (
   file: RNFile,
   callbacks: BulkIngestionCallbacks
@@ -150,7 +149,6 @@ export const ingestBulkDocument = async (
   }
 
   const formData = new FormData();
-  // React Native requires the file object to look exactly like this:
   formData.append("file", {
     uri: file.uri,
     name: file.name,
@@ -161,7 +159,6 @@ export const ingestBulkDocument = async (
     const response = await fetch(`${INGESTION_BASE_URL}/process/process-document`, {
       method: "POST",
       body: formData,
-      // React Native sets Content-Type multipart/form-data automatically with boundary
     });
 
     if (!response.ok) {
@@ -174,7 +171,6 @@ export const ingestBulkDocument = async (
       throw new Error(errMsg);
     }
 
-    // Fallback: Read full text if streaming isn't supported
     const text = await response.text();
     const lines = text.split("\n\n");
 
@@ -224,7 +220,6 @@ export const api = {
       await AsyncStorage.removeItem("refreshToken");
       await AsyncStorage.removeItem("user");
     },
-    // Add helper to retrieve user from storage
     getMe: async () => {
         const userStr = await AsyncStorage.getItem("user");
         return userStr ? JSON.parse(userStr) : null;
@@ -299,7 +294,6 @@ export const api = {
     uploadBulk: ingestBulkDocument
   },
 
-  // --- Message Handling ---
   streamMessage: async (
     message: string, 
     threadId: string | null,
@@ -322,7 +316,6 @@ export const api = {
         throw new Error(err.detail || "Stream connection failed");
       }
       
-      // Fallback: Just read text (no stream effect but functional for RN fetch)
       const text = await response.text();
       const lines = text.split("\n\n");
       lines.forEach(line => {
@@ -342,8 +335,6 @@ export const api = {
               } catch(e) {}
            }
       });
-      
-      // Since we aren't truly streaming in this fetch implementation, call Done at the end
       onDone();
 
     } catch (err: any) {
@@ -372,7 +363,6 @@ export const api = {
         signal: signal,
       });
 
-      // Reading text directly for simplicity in RN context
       const text = await response.text();
       const lines = text.split("\n\n");
       

@@ -1,5 +1,7 @@
+// components/ChatPane.tsx
+
 import * as Clipboard from 'expo-clipboard';
-import { Bot, Check, Copy, Pencil, Sparkles } from 'lucide-react-native';
+import { Bot, Check, Copy, Sparkles } from 'lucide-react-native'; // Removed 'Pencil' from imports
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -44,7 +46,7 @@ interface ChatPaneProps {
   onPauseThinking: () => void
   userName?: string
   userAvatar?: string
-  theme?: "light" | "dark" // Keeping strict type here
+  theme?: "light" | "dark" 
 }
 
 const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
@@ -52,10 +54,6 @@ const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
   ref,
 ) {
   const systemScheme = useColorScheme();
-  
-  // ✅ FIX: Safer logic for determining dark mode
-  // If 'theme' prop is provided, use it. Otherwise fallback to systemScheme.
-  // We default to 'light' if both are undefined/null.
   const activeScheme = theme ?? systemScheme ?? "light";
   const isDark = activeScheme === "dark";
 
@@ -128,7 +126,6 @@ const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
         onContentSizeChange={() => scrollToBottom()} 
       >
         {messages.map((msg, index) => {
-            // const isLastMessage = index === messages.length - 1; // Unused
             const isUser = msg.role === "user";
 
             return (
@@ -196,7 +193,7 @@ const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
                   ]}>
                      {msg.content ? (
                         <View style={styles.markdownWrapper}>
-                            <Markdown style={markdownStyles}>
+                            <Markdown style={markdownStyles} key={msg.content}>
                                 {msg.content}
                             </Markdown>
                         </View>
@@ -214,14 +211,9 @@ const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
                        styles.metaActions,
                        isUser ? styles.justifyEnd : styles.justifyStart
                    ]}>
-                      {isUser && (
-                         <TouchableOpacity 
-                            onPress={() => { setEditingId(msg.id); setDraft(msg.content); }} 
-                            style={styles.iconBtn}
-                         >
-                           <Pencil size={14} color="#9ca3af" />
-                         </TouchableOpacity>
-                      )}
+                      
+                      {/* --- ❌ REMOVED EDIT ICON BUTTON HERE --- */}
+
                       {!isUser && (
                          <TouchableOpacity 
                             onPress={() => handleCopy(msg.content)} 
